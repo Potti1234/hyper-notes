@@ -2,7 +2,7 @@ import type { Attribute, ChildAttribute, Html, HtmlBuilder } from 'foldkit/html'
 
 import { cn } from '@/lib/utils'
 
-/* The app's owned design layer (crease.lock.json: hypernotes/view): the
+/* The owned design layer of the app (crease.lock.json: hypernotes/view): the
    domain patterns creaseui has no component for. Region roots carry h.Id
    (hyper-effect morphs by id), the windowed issue list and board need exact
    geometry, and docs render sanitized HTML. Component CSS for these roots is
@@ -42,6 +42,28 @@ export const box = <Msg>(
 export const swatch = <Msg>(props: Readonly<{ color: string }>, h: HtmlBuilder<Msg>): Html =>
   h.span([h.Class('inline-block size-6 shrink-0 rounded-md border'), h.Style({ background: props.color })], [])
 
+/** A database option (select, multi-select, status) or person as a
+ *  coloured chip; status chips lead with a dot. */
+export const optionChip = <Msg>(
+  props: Readonly<{ color: string; isStatus?: boolean; children: ReadonlyArray<Html | string> }>,
+  h: HtmlBuilder<Msg>,
+): Html =>
+  box({ as: 'span', class: cn('nb-chip', props.isStatus === true && 'nb-chip-status'), attributes: [h.DataAttribute('chip', props.color)], children: [
+      ...(props.isStatus === true ? [box({ as: 'span', class: 'nb-chip-dot', children: [] }, h)] : []),
+      ...props.children,
+    ] }, h)
+
+/** Class names of the database grid (src/app/page/database-view.ts), styled in design.css. */
+export const DB_GRID = {
+  scroll: 'nb-db-scroll',
+  table: 'nb-db-table',
+  row: 'nb-db-row',
+  cell: 'nb-db-cell',
+  head: 'nb-db-head',
+  title: 'nb-db-title',
+  add: 'nb-db-add',
+} as const
+
 /** A listbox option of the pickers and menus: a roving-focus row whose
  *  active state the page moves before the server answers (data-active). */
 export const optionRow = <Msg>(
@@ -69,7 +91,7 @@ export const optionRow = <Msg>(
     [...props.children],
   )
 
-/** The page root: light/dark and the member's theme preset as classes. */
+/** The page root: light/dark and the theme preset of the member as classes. */
 export const pageRoot = <Msg>(
   props: Readonly<{ isDark: boolean; theme: string; class?: string; children: ReadonlyArray<Html> }>,
   h: HtmlBuilder<Msg>,

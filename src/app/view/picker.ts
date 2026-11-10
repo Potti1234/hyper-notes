@@ -21,7 +21,7 @@ import { box, optionRow } from '@/app/view/design'
    crease's `command` is the visual source (classes, spacing). It is not used
    directly: on the server its Enter key does nothing (EXPERIMENT.md, F2). */
 
-export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options'])
+export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options', 'property', 'propertyType', 'addProperty', 'cell', 'cells', 'view', 'addView'])
 export type PickerField = typeof PickerField.Type
 
 export const Picker = S.Struct({
@@ -50,7 +50,7 @@ export type PickerItem = Readonly<{
   detail?: Readonly<{ before: string; match: string; after: string }>
 }>
 
-export const isMultiSelect = (_field: PickerField): boolean => false
+export const isMultiSelect = (field: PickerField): boolean => field === 'cells'
 
 export const placeholder: Readonly<Record<PickerField, string>> = {
   page: 'Search actions…',
@@ -59,6 +59,13 @@ export const placeholder: Readonly<Record<PickerField, string>> = {
   icon: 'Filter…',
   cover: 'Search covers or paste an https:// image link…',
   options: 'Search actions…',
+  property: 'Search actions…',
+  propertyType: 'Search for a type…',
+  addProperty: 'Search for a type…',
+  cell: 'Search for an option…',
+  cells: 'Search for an option…',
+  view: 'Type a new name…',
+  addView: 'Search layouts…',
 }
 
 /** Index of the first checked item: where a single-choice picker starts. */

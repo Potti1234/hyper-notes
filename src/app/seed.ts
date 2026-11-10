@@ -1,5 +1,6 @@
 import { Effect } from 'effect'
 
+import type { Database, Values } from './database'
 import type { Member, Page } from './domain'
 import { block } from './editor/blocks'
 import { type Block, type Inline, type Kind, PLAIN, type RichText } from './editor/schema'
@@ -128,9 +129,44 @@ export const demoPages = (now: number): ReadonlyArray<Page> => {
       createdBy: 'riley',
       updatedBy: 'riley',
     }, now - 20 * hour),
+    page('demo-tasks', {
+      title: 'Tasks',
+      icon: emoji('2705'),
+      position: 4,
+      database: DEMO_TASKS,
+      createdBy: 'avery',
+      updatedBy: 'avery',
+    }, now - 18 * hour),
+    ...DEMO_TASK_ROWS.map(([title, values], index) => page(`demo-task-${index + 1}`, { title, parentId: 'demo-tasks', position: index + 1, values }, now - (16 - index) * hour)),
     page('demo-journal', { title: 'Journal', icon: emoji('1f4d3'), section: 'private', position: 1, content: [p('Only I can see this page.')] }, now - 10 * hour),
   ]
 }
+
+const DEMO_TASKS: Database = {
+  properties: [
+    { id: 'demo-status', name: 'Status', type: { _tag: 'Status', options: [
+      { id: 'demo-todo', name: 'Not started', color: 'default', group: 'todo' },
+      { id: 'demo-doing', name: 'In progress', color: 'blue', group: 'inProgress' },
+      { id: 'demo-done', name: 'Done', color: 'green', group: 'done' },
+    ] } },
+    { id: 'demo-assignee', name: 'Assignee', type: { _tag: 'Person' } },
+    { id: 'demo-due', name: 'Due', type: { _tag: 'Date' } },
+    { id: 'demo-tags', name: 'Tags', type: { _tag: 'MultiSelect', options: [
+      { id: 'demo-tag-docs', name: 'Docs', color: 'purple' },
+      { id: 'demo-tag-editor', name: 'Editor', color: 'orange' },
+    ] } },
+  ],
+  views: [
+    { id: 'demo-tasks-table', name: 'Table', layout: 'table', filters: [], sorts: [], groupBy: null, dateBy: 'demo-due', hidden: [] },
+  ],
+}
+
+const status = (optionId: string) => ({ 'demo-status': { _tag: 'OptionValue', optionId } }) as const
+const DEMO_TASK_ROWS: ReadonlyArray<readonly [string, Values]> = [
+  ['Write the database docs', { ...status('demo-doing'), 'demo-assignee': { _tag: 'PeopleValue', memberIds: ['morgan'] }, 'demo-tags': { _tag: 'OptionsValue', optionIds: ['demo-tag-docs'] } }],
+  ['Polish the slash menu', { ...status('demo-done'), 'demo-assignee': { _tag: 'PeopleValue', memberIds: ['avery'] }, 'demo-tags': { _tag: 'OptionsValue', optionIds: ['demo-tag-editor'] } }],
+  ['Plan the board view', { ...status('demo-todo') }],
+]
 
 export const demoData = (now: number): WorkspaceData => ({
   members: DEMO_MEMBERS,

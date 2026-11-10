@@ -102,6 +102,31 @@ try {
     await measure(page, '#picker', `${at} the page options`)
     await closeWithEscape(page, '#picker')
 
+    // A database: the header, + property and cell menus, and a date cell's calendar.
+    await page.goto(`${base}/p/demo-tasks`)
+    await page.waitForSelector('#database-table [data-row]')
+    await page.waitForTimeout(300)
+    for (const [selector, label] of [
+      ['#header-title', 'the Name header menu'],
+      ['#header-demo-tags', 'the Tags header menu'],
+      ['#add-property', 'the + property menu'],
+      ['#cell-demo-task-1-demo-status', 'a status cell menu'],
+      ['#cell-demo-task-3-demo-tags', 'a multi-select cell menu, last row'],
+      ['#cell-demo-task-1-demo-assignee', 'a person cell menu'],
+    ]) {
+      await page.locator(selector).scrollIntoViewIfNeeded()
+      await page.locator(selector).click()
+      await measure(page, '#picker', `${at} ${label}`)
+      await closeWithEscape(page, '#picker')
+    }
+    await page.locator('#cell-demo-task-2-demo-due').scrollIntoViewIfNeeded()
+    await page.locator('#cell-demo-task-2-demo-due').click()
+    await measure(page, '[data-slot="popover-content"]', `${at} a date cell calendar`)
+    await closeWithEscape(page, '[data-slot="popover-content"]')
+    await page.goto(`${base}/p/demo-getting-started`)
+    await page.waitForSelector('[data-editor-root] [data-block-id]')
+    await page.waitForTimeout(300)
+
     // Editor overlays, on the first block and on one near the bottom of the window.
     const blocks = await page.evaluate(() => {
       const texts = [...document.querySelectorAll('[data-editor-root] > [data-block-id] > .nb-row > [data-text-of]')].filter(text => {

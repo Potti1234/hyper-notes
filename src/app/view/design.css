@@ -187,3 +187,22 @@
   .nb-caret:hover { background: var(--accent); }
   .nb-tool:hover, .nb-tool.nb-on { background: var(--accent); }
 }
+
+/* Database option chips (src/app/view/design.ts optionChip): Notion's option colours. */
+.nb-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; height: 20px; padding: 0 6px; border-radius: 3px; font-size: 13px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(227,226,224,.5); color: var(--foreground); }
+.nb-chip-status { border-radius: 10px; padding: 0 8px 0 7px; }
+.nb-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .6; flex-shrink: 0; }
+.nb-chip[data-chip="gray"] { background: rgba(227,226,224,.8); } .nb-chip[data-chip="brown"] { background: rgba(238,224,218,1); } .nb-chip[data-chip="orange"] { background: rgba(250,222,201,1); }
+.nb-chip[data-chip="yellow"] { background: rgba(253,236,200,1); } .nb-chip[data-chip="green"] { background: rgba(219,237,219,1); } .nb-chip[data-chip="blue"] { background: rgba(211,229,239,1); }
+.nb-chip[data-chip="purple"] { background: rgba(232,222,238,1); } .nb-chip[data-chip="pink"] { background: rgba(245,224,233,1); } .nb-chip[data-chip="red"] { background: rgba(255,226,221,1); }
+.dark .nb-chip { background: rgba(255,255,255,.09); }
+.dark .nb-chip[data-chip="gray"], .dark .nb-chip[data-chip="brown"], .dark .nb-chip[data-chip="orange"], .dark .nb-chip[data-chip="yellow"], .dark .nb-chip[data-chip="green"], .dark .nb-chip[data-chip="blue"], .dark .nb-chip[data-chip="purple"], .dark .nb-chip[data-chip="pink"], .dark .nb-chip[data-chip="red"] { filter: brightness(0.45) saturate(1.5); color: #fff; }
+
+/* Database table (src/app/page/database-view.ts): Notion's grid of rows and property columns. */
+.nb-db-scroll { overflow-x: auto; margin-top: 4px; }
+.nb-db-table { display: flex; flex-direction: column; width: max-content; min-width: 100%; border-top: 1px solid var(--border); font-size: 14px; }
+.nb-db-row { display: flex; border-bottom: 1px solid var(--border); }
+.nb-db-cell { display: flex; align-items: stretch; width: 180px; min-width: 0; flex-shrink: 0; border-right: 1px solid var(--border); }
+.nb-db-cell.nb-db-title { width: 260px; }
+.nb-db-cell.nb-db-add { width: 40px; border-right: 0; align-items: center; justify-content: center; }
+.nb-db-head { min-height: 33px; }

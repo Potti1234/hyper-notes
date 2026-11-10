@@ -20,10 +20,12 @@ import * as B from '../editor/blocks'
 import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
+import * as D from '../database'
 import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -104,6 +106,9 @@ export const Model = S.Struct({
   people: S.Array(MemberRef),
   trash: S.Array(TrashEntry),
   now: S.Number,
+  rows: S.Array(RowEntry),
+  parentDatabase: S.NullOr(ParentDatabase),
+  db: DatabaseUi,
   picker: S.NullOr(Picker),
   titleDraft: S.NullOr(S.String),
   notice: S.NullOr(S.String),
@@ -175,8 +180,33 @@ export const Message = defineMessageUnion({
     pages: S.Array(PageEntry),
     people: S.Array(MemberRef),
     trash: S.Array(TrashEntry),
+    rows: S.Array(RowEntry),
+    parentDatabase: S.NullOr(ParentDatabase),
     now: S.Number,
   },
+  ClickedMakeDatabase: { layout: D.Layout },
+  ClickedDbView: { viewId: S.String },
+  ClickedViewMenu: { viewId: S.String },
+  ClickedAddView: {},
+  ClickedHeader: { propertyId: S.String },
+  ClickedAddProperty: {},
+  ChangedPropertyName: { name: S.String },
+  SubmittedPropertyName: {},
+  ClickedCell: { rowId: S.String, propertyId: S.String },
+  ChangedCell: { text: S.String },
+  SubmittedCell: {},
+  CanceledCell: {},
+  ToggledCell: { rowId: S.String, propertyId: S.String, isChecked: S.Boolean },
+  ClickedDateCell: { rowId: S.String, propertyId: S.String },
+  ChangedDateMonth: { month: S.String },
+  PickedDate: { day: S.String },
+  ClearedDate: {},
+  ClosedDate: {},
+  ClickedNewRow: {},
+  ClickedDbSearch: {},
+  ChangedDbQuery: { query: S.String },
+  SucceededDbChange: { addedId: S.NullOr(S.String), change: D.DatabaseChange },
+  SucceededAddRow: { rowId: S.String },
   SucceededCreate: { id: S.String },
   SucceededTrash: { pageId: S.String },
   FailedChange: { reason: S.String },
@@ -223,6 +253,24 @@ export const ClientMessage = S.Union([
   Message.ClickedCloseHistory,
   Message.ClickedVersion,
   Message.ClickedRestoreVersion,
+  Message.ClickedMakeDatabase,
+  Message.ClickedDbView,
+  Message.ClickedViewMenu,
+  Message.ClickedAddView,
+  Message.ClickedHeader,
+  Message.ClickedAddProperty,
+  Message.SubmittedPropertyName,
+  Message.ClickedCell,
+  Message.SubmittedCell,
+  Message.CanceledCell,
+  Message.ToggledCell,
+  Message.ClickedDateCell,
+  Message.ChangedDateMonth,
+  Message.PickedDate,
+  Message.ClearedDate,
+  Message.ClosedDate,
+  Message.ClickedNewRow,
+  Message.ClickedDbSearch,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -261,6 +309,51 @@ export const ChangePage = Command.define('ChangePage', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ pageId, change, actorId }) =>
     Workspace.use(workspace => workspace.updatePage(pageId, patchOf(change), actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const MakeDatabase = Command.define('MakeDatabase', {
+  args: { pageId: S.String, layout: D.Layout, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ pageId, layout, actorId }) =>
+    Workspace.use(workspace => workspace.makeDatabase(pageId, layout, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const ChangeDatabase = Command.define('ChangeDatabase', {
+  args: { pageId: S.String, change: D.DatabaseChange, actorId: S.String },
+  messages: [Message.SucceededDbChange, Message.FailedChange],
+  execute: ({ pageId, change, actorId }) =>
+    Workspace.use(workspace => workspace.changeDatabase(pageId, change, actorId)).pipe(
+      Effect.map(addedId => Message.SucceededDbChange({ addedId, change })),
+      Effect.catchTag('InvalidChange', ({ reason }) => failed(reason)),
+    ),
+})
+
+export const SetValue = Command.define('SetValue', {
+  args: { rowId: S.String, propertyId: S.String, value: S.NullOr(D.Value), actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ rowId, propertyId, value, actorId }) =>
+    Workspace.use(workspace => workspace.setValue(rowId, propertyId, value, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+/** "Create …" in a select cell: adds the option, then picks it (keeping `keep` on a multi-select). */
+export const CreateOption = Command.define('CreateOption', {
+  args: { databaseId: S.String, rowId: S.String, propertyId: S.String, name: S.String, keep: S.NullOr(S.Array(S.String)), actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ databaseId, rowId, propertyId, name, keep, actorId }) =>
+    Workspace.use(workspace =>
+      Effect.flatMap(workspace.changeDatabase(databaseId, { _tag: 'AddOption', propertyId, name }, actorId), optionId =>
+        optionId === null ? Effect.void : workspace.setValue(rowId, propertyId, keep === null ? { _tag: 'OptionValue', optionId } : { _tag: 'OptionsValue', optionIds: [...keep, optionId] }, actorId)),
+    ).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const AddRow = Command.define('AddRow', {
+  args: { databaseId: S.String, values: D.Values, actorId: S.String },
+  messages: [Message.SucceededAddRow, Message.FailedChange],
+  execute: ({ databaseId, values, actorId }) =>
+    Workspace.use(workspace => workspace.addRow(databaseId, { title: '', values, beforeId: null }, actorId)).pipe(
+      Effect.map(row => Message.SucceededAddRow({ rowId: row.id })),
+      Effect.catchTag('InvalidChange', ({ reason }) => failed(reason)),
+    ),
 })
 
 export const SaveContent = Command.define('SaveContent', {
@@ -399,7 +492,17 @@ export const LoadUrl = Command.define('LoadUrl', {
 
 export type Slice = Omit<typeof Message.GotPage.Type, '_tag' | 'me'> & Readonly<{ me: Member | null }>
 
+export const rowEntryOf = (page: Page): RowEntry => ({
+  id: page.id, title: page.title, icon: page.icon, values: page.values, isLocked: page.isLocked,
+  createdAt: page.createdAt, createdBy: page.createdBy, updatedAt: page.updatedAt, updatedBy: page.updatedBy,
+})
+
 const pathOf = (state: WorkspaceState, page: Page): string => ancestorsOf(state.pages, page).map(titleOf).join(' / ')
+
+const parentDatabaseOf = (state: WorkspaceState, page: Page | null): ParentDatabase | null => {
+  const parent = page?.parentId == null ? undefined : state.pages.find(entry => entry.id === page.parentId)
+  return parent?.database == null ? null : { id: parent.id, title: titleOf(parent), database: parent.database }
+}
 
 export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: string, now: number): Slice => {
   const found = pageId === null ? undefined : state.pages.find(page => page.id === pageId)
@@ -417,6 +520,8 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     nav: navOf(state, memberId),
     pages: visible.filter(entry => !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, path: pathOf(state, entry), section: entry.section })),
     people: state.members.map(member => ({ id: member.id, name: member.name })),
+    rows: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(rowEntryOf),
+    parentDatabase: parentDatabaseOf(state, page),
     trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, trashedBy: state.members.find(member => member.id === entry.trashedBy)?.name ?? null, path: pathOf(state, entry) })),
     now,
   }
@@ -424,14 +529,14 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash])
+  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase])
 
 // INIT
 
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -489,6 +594,25 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         ...COVERS.map(cover => ({ value: `gallery:${cover.name}`, label: cover.label, group: cover.group, isChecked: model.page?.cover._tag === 'GalleryCover' && model.page.cover.name === cover.name })),
       ]
     }
+    case 'property':
+      return propertyItems(model, picker.pageId)
+    case 'propertyType': {
+      const current = editableDatabase(model)?.database.properties.find(entry => entry.id === picker.pageId)?.type._tag
+      return D.PROPERTY_TAGS.map(tag => ({ value: tag, label: D.TYPE_LABEL[tag], isChecked: tag === current }))
+    }
+    case 'addProperty':
+      return D.PROPERTY_TAGS.map(tag => ({ value: tag, label: D.TYPE_LABEL[tag], group: 'Type' }))
+    case 'cell':
+    case 'cells':
+      return cellItems(model, picker.pageId, picker.query)
+    case 'view':
+      return [
+        ...(picker.query.trim() === '' ? [] : [{ value: 'rename', label: `Rename to "${picker.query.trim()}"`, keywords: picker.query }]),
+        { value: 'duplicate', label: 'Duplicate view' },
+        ...((model.page?.database?.views.length ?? 0) > 1 ? [{ value: 'delete', label: 'Delete view' }] : []),
+      ]
+    case 'addView':
+      return [{ value: 'layout:table', label: D.LAYOUT_LABEL.table, group: 'Layout' }]
     case 'options': {
       const page = model.page
       if (page === null) return []
@@ -576,6 +700,15 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'cover':
     case 'options':
       return chooseLook(model, picker, value)
+    case 'cell':
+    case 'cells':
+      return chooseCell(model, picker, value)
+    case 'property':
+    case 'propertyType':
+    case 'addProperty':
+    case 'view':
+    case 'addView':
+      return chooseDatabase(model, picker, value)
     case 'move': {
       if (value === 'section:workspace' || value === 'section:private') return { model: closed, commands: [MovePage({ pageId: picker.pageId, parentId: null, section: value === 'section:private' ? 'private' : 'workspace', actorId })] }
       const parentId = value.startsWith('page:') ? value.slice(5) : ''
@@ -583,6 +716,288 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
       return parent === undefined ? { model: closed } : { model: closed, commands: [MovePage({ pageId: picker.pageId, parentId, section: parent.section, actorId })] }
     }
   }
+}
+
+// DATABASES
+
+/** The open database page, when its schema and rows may change. */
+const editableDatabase = (model: Model): (Page & { database: D.Database }) | null =>
+  model.page !== null && model.page.database !== null && !model.isInTrash && !model.page.isLocked ? (model.page as Page & { database: D.Database }) : null
+
+type CellTarget = Readonly<{ databaseId: string; database: D.Database; row: RowEntry; property: D.Property | null; isEditable: boolean }>
+
+/** A cell of the open database, or a property of the open row page. */
+const cellOf = (model: Model, rowId: string, propertyId: string): CellTarget | null => {
+  const page = model.page
+  if (page === null) return null
+  const source = page.database !== null
+    ? { databaseId: page.id, database: page.database, row: model.rows.find(row => row.id === rowId), isLocked: page.isLocked }
+    : model.parentDatabase !== null && rowId === page.id ? { databaseId: model.parentDatabase.id, database: model.parentDatabase.database, row: rowEntryOf(page), isLocked: false } : null
+  if (source === null || source.row === undefined) return null
+  const property = propertyId === D.TITLE ? null : source.database.properties.find(entry => entry.id === propertyId)
+  if (property === undefined) return null
+  return { databaseId: source.databaseId, database: source.database, row: source.row, property, isEditable: !model.isInTrash && !source.isLocked && !source.row.isLocked && (property === null || !isComputed(property)) }
+}
+
+const withDb = (model: Model, db: Partial<DatabaseUi>): Model => ({ ...model, db: { ...model.db, ...db } })
+
+const changeDb = (model: Model, page: Page, change: D.DatabaseChange): UpdateReturn => ({ model: { ...model, picker: null }, commands: [ChangeDatabase({ pageId: page.id, change, actorId: model.me.id })] })
+
+const setValue = (model: Model, cell: CellTarget, value: D.Value | null): UpdateReturn => {
+  if (cell.property === null) return { model }
+  const checked = value === null ? null : D.checkValue(cell.property, value, model.people)
+  return typeof checked === 'string'
+    ? { model: { ...model, notice: checked } }
+    : { model, commands: [SetValue({ rowId: cell.row.id, propertyId: cell.property.id, value: checked, actorId: model.me.id })] }
+}
+
+const selectedIds = (cell: CellTarget): ReadonlyArray<string> => {
+  const value = cell.property === null ? undefined : D.valueOf(cell.property, cell.row)
+  return value?._tag === 'OptionValue' ? [value.optionId] : value?._tag === 'OptionsValue' ? value.optionIds : value?._tag === 'PeopleValue' ? value.memberIds : []
+}
+
+/** Opens a cell: typed cells get an input, option and person cells a picker. */
+const openCell = (model: Model, rowId: string, propertyId: string): UpdateReturn => {
+  const cell = cellOf(model, rowId, propertyId)
+  if (cell === null || !cell.isEditable) return { model }
+  const { property } = cell
+  if (isTyped(property)) return { model: focusOn(withDb({ ...model, picker: null }, { editing: { rowId, propertyId, draft: draftOf(property, cell.row) }, datePick: null }), `#${CELL_INPUT_ID}`) }
+  if (property === null) return { model }
+  switch (property.type._tag) {
+    case 'Select': case 'Status':
+      return { model: withPicker(model, openPicker('cell', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId))) }
+    case 'MultiSelect': case 'Person':
+      return { model: withPicker(model, openPicker('cells', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId))) }
+    case 'Checkbox':
+    {
+      const value = D.valueOf(property, cell.row)
+      return setValue(model, cell, { _tag: 'CheckboxValue', isChecked: !(value?._tag === 'CheckboxValue' && value.isChecked) })
+    }
+    case 'Date': {
+      const value = D.valueOf(property, cell.row)
+      return { model: withDb({ ...model, picker: null }, { datePick: { rowId, propertyId, month: (value?._tag === 'DateValue' ? value.start : todayOf(model)).slice(0, 7) }, editing: null }) }
+    }
+    default:
+      return { model }
+  }
+}
+
+const todayOf = (model: Model): string => new Date(model.now).toISOString().slice(0, 10)
+
+/** Enter or leaving the input saves a typed cell; an unparsable number is refused. */
+const submitCell = (model: Model): UpdateReturn => {
+  const editing = model.db.editing
+  if (editing === null) return { model }
+  const closed = withDb(model, { editing: null })
+  const cell = cellOf(model, editing.rowId, editing.propertyId)
+  if (cell === null || !cell.isEditable || editing.draft === draftOf(cell.property, cell.row)) return { model: closed }
+  if (cell.property === null) return { model: closed, commands: [SaveTitle({ pageId: cell.row.id, title: editing.draft, actorId: model.me.id })] }
+  if (cell.property.type._tag === 'Number') {
+    const value = D.parseNumber(editing.draft, cell.property.type.format)
+    return value === 'invalid' ? { model: { ...closed, notice: 'Enter a number.' } } : setValue(closed, cell, value === null ? null : { _tag: 'NumberValue', value })
+  }
+  return setValue(closed, cell, editing.draft.trim() === '' ? null : { _tag: 'TextValue', text: editing.draft.trim() })
+}
+
+const pickDate = (model: Model, day: string | null): UpdateReturn => {
+  const pick = model.db.datePick
+  if (pick === null) return { model }
+  const closed = withDb(model, { datePick: null })
+  const cell = cellOf(model, pick.rowId, pick.propertyId)
+  return cell === null || !cell.isEditable || (day !== null && !D.DATE_PATTERN.test(day)) ? { model: closed } : setValue(closed, cell, day === null ? null : { _tag: 'DateValue', start: day, end: null })
+}
+
+const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerItem> => {
+  const page = editableDatabase(model)
+  const view = page === null ? null : activeView(page.database, model.db)
+  const sort = view?.sorts.find(entry => entry.propertyId === propertyId)
+  const sorts = [
+    { value: 'sort:asc', label: 'Sort ascending', group: 'Sort', isChecked: sort !== undefined && !sort.isDescending },
+    { value: 'sort:desc', label: 'Sort descending', group: 'Sort', isChecked: sort?.isDescending === true },
+    ...(sort === undefined ? [] : [{ value: 'sort:none', label: 'Remove sort', group: 'Sort' }]),
+  ]
+  const property = page?.database.properties.find(entry => entry.id === propertyId)
+  if (property === undefined) return sorts
+  return [
+    { value: 'rename', label: 'Rename', group: 'Property' },
+    { value: 'type', label: 'Change type', group: 'Property', hint: D.TYPE_LABEL[property.type._tag] },
+    ...sorts,
+    { value: 'hide', label: 'Hide in view', group: 'View' },
+    { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
+    { value: 'delete', label: 'Delete property', group: 'Property' },
+  ]
+}
+
+const cellItems = (model: Model, target: string, query: string): ReadonlyArray<PickerItem> => {
+  const ref = parseTarget(target)
+  const cell = ref === null ? null : cellOf(model, ref.rowId, ref.propertyId)
+  if (cell?.property == null) return []
+  const chosen = selectedIds(cell)
+  if (cell.property.type._tag === 'Person') return model.people.map(person => ({ value: `option:${person.id}`, label: person.name, isChecked: chosen.includes(person.id) }))
+  const options = D.optionsOf(cell.property)
+  const name = query.trim()
+  const canCreate = cell.property.type._tag !== 'Status' && name !== '' && !options.some(option => option.name.toLowerCase() === name.toLowerCase())
+  return [
+    ...options.map(option => ({ value: `option:${option.id}`, label: option.name, isChecked: chosen.includes(option.id), ...('group' in option ? { group: option.group === 'todo' ? 'To-do' : option.group === 'inProgress' ? 'In progress' : 'Complete' } : {}) })),
+    ...(canCreate ? [{ value: 'create', label: `Create "${name}"`, keywords: name }] : []),
+  ]
+}
+
+const chooseCell = (model: Model, picker: Picker, value: string): UpdateReturn => {
+  const ref = parseTarget(picker.pageId)
+  const cell = ref === null ? null : cellOf(model, ref.rowId, ref.propertyId)
+  const closed = { ...model, picker: null }
+  if (cell?.property == null || !cell.isEditable) return { model: closed }
+  const isMulti = picker.field === 'cells'
+  const next = isMulti ? { ...model, picker: { ...picker, query: '' } } : closed
+  const chosen = selectedIds(cell)
+  if (value === 'create') {
+    const name = picker.query.trim()
+    return name === '' ? { model: next } : { model: next, commands: [CreateOption({ databaseId: cell.databaseId, rowId: cell.row.id, propertyId: cell.property.id, name, keep: isMulti ? chosen : null, actorId: model.me.id })] }
+  }
+  const id = value.startsWith('option:') ? value.slice(7) : ''
+  if (id === '') return { model: next }
+  if (!isMulti) return setValue(next, cell, chosen.includes(id) ? null : { _tag: 'OptionValue', optionId: id })
+  const ids = chosen.includes(id) ? chosen.filter(entry => entry !== id) : [...chosen, id]
+  return setValue(next, cell, ids.length === 0 ? null : cell.property.type._tag === 'Person' ? { _tag: 'PeopleValue', memberIds: ids } : { _tag: 'OptionsValue', optionIds: ids })
+}
+
+const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateReturn => {
+  const closed = { ...model, picker: null }
+  const page = editableDatabase(model)
+  if (page === null) return { model: closed }
+  const view = activeView(page.database, model.db)
+  const property = page.database.properties.find(entry => entry.id === picker.pageId)
+  switch (picker.field) {
+    case 'property': {
+      if (value.startsWith('sort:') && view !== null) return changeDb(model, page, { _tag: 'SetSort', viewId: view.id, propertyId: picker.pageId, isDescending: value === 'sort:none' ? null : value === 'sort:desc' })
+      if (property === undefined) return { model: closed }
+      switch (value) {
+        case 'rename': return { model: focusOn(withDb(closed, { renaming: { propertyId: property.id, name: property.name } }), `#${PROPERTY_NAME_ID}`) }
+        case 'type': return { model: withPicker(model, openPicker('propertyType', property.id, picker.anchor, Math.max(0, D.PROPERTY_TAGS.indexOf(property.type._tag)))) }
+        case 'hide': return view === null ? { model: closed } : changeDb(model, page, { _tag: 'SetHidden', viewId: view.id, propertyId: property.id, isHidden: true })
+        case 'duplicate': return changeDb(model, page, { _tag: 'DuplicateProperty', propertyId: property.id })
+        case 'delete': return changeDb(model, page, { _tag: 'DeleteProperty', propertyId: property.id })
+        default: return { model: closed }
+      }
+    }
+    case 'propertyType':
+      return property !== undefined && D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'SetPropertyType', propertyId: property.id, tag: value }) : { model: closed }
+    case 'addProperty':
+      return D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'AddProperty', tag: value, name: '' }) : { model: closed }
+    case 'view': {
+      const target = page.database.views.find(entry => entry.id === picker.pageId)
+      if (target === undefined) return { model: closed }
+      switch (value) {
+        case 'rename': return picker.query.trim() === '' ? { model } : changeDb(model, page, { _tag: 'RenameView', viewId: target.id, name: picker.query })
+        case 'duplicate': return changeDb(model, page, { _tag: 'DuplicateView', viewId: target.id })
+        case 'delete': return changeDb(model, page, { _tag: 'DeleteView', viewId: target.id })
+        default: return { model: closed }
+      }
+    }
+    case 'addView': {
+      const layout = value.startsWith('layout:') ? value.slice(7) : ''
+      return S.is(D.Layout)(layout) ? changeDb(model, page, { _tag: 'AddView', layout }) : { model: closed }
+    }
+    default:
+      return { model: closed }
+  }
+}
+
+/** A database message; every id and value is checked against the open database. */
+const updateDatabase = (model: Model, message: Message): UpdateReturn | null => {
+  const actorId = model.me.id
+  switch (message._tag) {
+    case 'ClickedMakeDatabase': {
+      const page = changeable(model)
+      return page === null || page.database !== null || model.parentDatabase !== null || !isBlankPage(page) ? { model } : { model, commands: [MakeDatabase({ pageId: page.id, layout: message.layout, actorId })] }
+    }
+    case 'ClickedDbView':
+      return model.page?.database?.views.some(view => view.id === message.viewId) === true ? { model: withDb({ ...model, picker: null }, { viewId: message.viewId, editing: null, datePick: null }) } : { model }
+    case 'ClickedViewMenu':
+      return editableDatabase(model)?.database.views.some(view => view.id === message.viewId) === true ? { model: withPicker(model, openPicker('view', message.viewId, viewAnchor(message.viewId))) } : { model }
+    case 'ClickedAddView': {
+      const page = editableDatabase(model)
+      return page === null ? { model } : { model: withPicker(model, openPicker('addView', page.id, ADD_VIEW_ANCHOR)) }
+    }
+    case 'ClickedHeader': {
+      const page = editableDatabase(model)
+      return page !== null && (message.propertyId === D.TITLE || page.database.properties.some(property => property.id === message.propertyId))
+        ? { model: withPicker(model, openPicker('property', message.propertyId, headerAnchor(message.propertyId))) }
+        : { model }
+    }
+    case 'ClickedAddProperty': {
+      const page = editableDatabase(model)
+      return page === null ? { model } : { model: withPicker(model, openPicker('addProperty', page.id, ADD_PROPERTY_ANCHOR)) }
+    }
+    case 'ChangedPropertyName':
+      return model.db.renaming === null ? { model } : { model: withDb(model, { renaming: { ...model.db.renaming, name: message.name.slice(0, D.MAX_NAME) } }) }
+    case 'SubmittedPropertyName': {
+      const renaming = model.db.renaming
+      const page = editableDatabase(model)
+      const property = page?.database.properties.find(entry => entry.id === renaming?.propertyId)
+      const closed = withDb(model, { renaming: null })
+      return page === null || renaming === null || property === undefined || renaming.name.trim() === '' || renaming.name.trim() === property.name
+        ? { model: closed }
+        : { model: closed, commands: [ChangeDatabase({ pageId: page.id, change: { _tag: 'RenameProperty', propertyId: property.id, name: renaming.name }, actorId })] }
+    }
+    case 'ClickedCell':
+      return openCell(model, message.rowId, message.propertyId)
+    case 'ChangedCell':
+      return model.db.editing === null ? { model } : { model: withDb(model, { editing: { ...model.db.editing, draft: message.text.slice(0, D.MAX_TEXT) } }) }
+    case 'SubmittedCell':
+      return submitCell(model)
+    case 'CanceledCell':
+      return { model: withDb(model, { editing: null }) }
+    case 'ToggledCell': {
+      const cell = cellOf(model, message.rowId, message.propertyId)
+      return cell === null || !cell.isEditable || cell.property?.type._tag !== 'Checkbox' ? { model } : setValue(model, cell, { _tag: 'CheckboxValue', isChecked: message.isChecked })
+    }
+    case 'ClickedDateCell': {
+      const pick = model.db.datePick
+      return pick?.rowId === message.rowId && pick.propertyId === message.propertyId ? { model: withDb(model, { datePick: null }) } : openCell(model, message.rowId, message.propertyId)
+    }
+    case 'ChangedDateMonth':
+      return model.db.datePick === null || !/^\d{4}-\d{2}$/.test(message.month) ? { model } : { model: withDb(model, { datePick: { ...model.db.datePick, month: message.month } }) }
+    case 'PickedDate':
+      return pickDate(model, message.day)
+    case 'ClearedDate':
+      return pickDate(model, null)
+    case 'ClosedDate':
+      return { model: withDb(model, { datePick: null }) }
+    case 'ClickedNewRow': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      return page === null || view === null ? { model } : { model, commands: [AddRow({ databaseId: page.id, values: D.valuesForNew(page.database, view), actorId })] }
+    }
+    case 'SucceededAddRow': {
+      const editing = withDb(model, { editing: { rowId: message.rowId, propertyId: D.TITLE, draft: '' } })
+      return { model: model.rows.some(row => row.id === message.rowId) ? focusOn(editing, `#${CELL_INPUT_ID}`) : editing }
+    }
+    case 'ClickedDbSearch':
+      return model.page?.database == null ? { model } : { model: focusOn(withDb(model, { query: model.db.query ?? '' }), `#${DB_SEARCH_ID}`) }
+    case 'ChangedDbQuery':
+      return { model: withDb(model, { query: message.query.slice(0, 200) }) }
+    case 'SucceededDbChange': {
+      const { change, addedId } = message
+      return change._tag === 'AddView' || change._tag === 'DuplicateView'
+        ? { model: withDb(model, { viewId: addedId }) }
+        : change._tag === 'DeleteView' && model.db.viewId === change.viewId ? { model: withDb(model, { viewId: null }) } : { model }
+    }
+    default:
+      return null
+  }
+}
+
+/** After a reload: drop edits of rows that went away, and focus a new row's title once it arrives. */
+const keepDb = (before: Model, model: Model): Model => {
+  const { editing, datePick } = model.db
+  const has = (rowId: string) => model.rows.some(row => row.id === rowId) || (model.parentDatabase !== null && model.page?.id === rowId)
+  const kept = withDb(model, {
+    editing: editing !== null && (has(editing.rowId) || !before.rows.length || editing.draft === '') ? editing : null,
+    datePick: datePick !== null && has(datePick.rowId) ? datePick : null,
+  })
+  return editing !== null && !before.rows.some(row => row.id === editing.rowId) && model.rows.some(row => row.id === editing.rowId) ? focusOn(kept, `#${CELL_INPUT_ID}`) : kept
 }
 
 // COMMENTS
@@ -668,7 +1083,18 @@ const keepHistory = (model: Model): Model => {
 }
 
 /** The page's update without the focus wrapper, for Story tests. */
+const DATABASE_TAGS = [
+  'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName',
+  'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
+  'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
+] as const
+type PageMessage = Exclude<Message, { _tag: (typeof DATABASE_TAGS)[number] }>
+const isPageMessage = (message: Message): message is PageMessage => !(DATABASE_TAGS as ReadonlyArray<string>).includes(message._tag)
+
 export const updateModel = (model: Model, message: Message): UpdateReturn =>
+  isPageMessage(message) ? updatePage(model, message) : (updateDatabase(model, message) ?? { model })
+
+const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
   M.value(message).pipe(
     M.withReturnType<UpdateReturn>(),
     M.tagsExhaustive({
@@ -777,7 +1203,7 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
         model.history === null || !canRestore(model) || !model.versions.some(version => version.id === versionId)
           ? { model }
           : { model: { ...model, history: null }, commands: [RestoreVersion({ versionId, actorId: model.me.id })] },
-      GotPage: ({ _tag: _, ...slice }) => ({ model: keepConfirm(keepHistory(keepComposer({ ...model, ...slice }))) }),
+      GotPage: ({ _tag: _, ...slice }) => ({ model: keepDb(model, keepConfirm(keepHistory(keepComposer({ ...model, ...slice })))) }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
       SucceededTrash: () => ({ model }),
       FailedChange: ({ reason }) => ({ model: { ...model, notice: reason } }),
@@ -856,6 +1282,50 @@ const HEADER_ACTIONS: HeaderActions<Message> = {
   onAddComment: Message.ClickedAddComment(),
 }
 
+const DB_MESSAGES: DatabaseMessages<Message> = {
+  view: viewId => Message.ClickedDbView({ viewId }),
+  viewMenu: viewId => Message.ClickedViewMenu({ viewId }),
+  addView: Message.ClickedAddView(),
+  header: propertyId => Message.ClickedHeader({ propertyId }),
+  addProperty: Message.ClickedAddProperty(),
+  propertyName: name => Message.ChangedPropertyName({ name }),
+  submitPropertyName: Message.SubmittedPropertyName(),
+  cell: (rowId, propertyId) => Message.ClickedCell({ rowId, propertyId }),
+  changeCell: text => Message.ChangedCell({ text }),
+  submitCell: Message.SubmittedCell(),
+  cancelCell: Message.CanceledCell(),
+  toggle: (rowId, propertyId, isChecked) => Message.ToggledCell({ rowId, propertyId, isChecked }),
+  date: (rowId, propertyId) => Message.ClickedDateCell({ rowId, propertyId }),
+  dateMonth: month => Message.ChangedDateMonth({ month }),
+  pickDate: day => Message.PickedDate({ day }),
+  clearDate: Message.ClearedDate(),
+  closeDate: Message.ClosedDate(),
+  newRow: Message.ClickedNewRow(),
+  search: Message.ClickedDbSearch(),
+  query: query => Message.ChangedDbQuery({ query }),
+}
+
+const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.text.length === 0 && entry.kind._tag === 'Paragraph')
+
+/** Under the title of an empty page: turn it into a database (Notion's "Get started with"). */
+const startView = (h: HtmlBuilder<Message>): Html =>
+  box({ class: 'mt-4 flex items-center gap-2 text-[14px] text-muted-foreground', attributes: [h.Id('database-start')], children: [
+      box({ as: 'span', children: ['Get started with'] }, h),
+      button({ variant: 'outline', size: 'compact', id: 'make-table', onClick: Message.ClickedMakeDatabase({ layout: 'table' }), children: [Icon.icon('table', { class: 'size-3.5' }, h), 'Table'] }, h),
+    ] }, h)
+
+/** The database of a database page, or the row's properties and blocks of any other page. */
+const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
+  const isEditable = !model.isInTrash && !page.isLocked
+  const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES }
+  if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: model.rows }, h)]
+  return [
+    ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, rowEntryOf(page), { ...context, isEditable: !model.isInTrash }, h)]),
+    ...(isEditable && model.parentDatabase === null && isBlankPage(page) ? [startView(h)] : []),
+    editorView(model, page, h),
+  ]
+}
+
 /** Cover, icon, title and blocks, in the page's font, text size and width. */
 const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
   const isEditable = !model.isInTrash && !page.isLocked
@@ -876,7 +1346,7 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
             ] }, h),
           ...backlinksView(model, h),
           ...commentsView(model, h),
-          editorView(model, page, h),
+          ...contentView(model, page, h),
         ] }, h),
     ] }, h)
 }
@@ -1086,7 +1556,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.confirmDelete === null ? [] : [region(h, { id: 'confirm-delete-layer', deps: [model.confirmDelete, model.trash], render: () => confirmDeleteView(model, model.confirmDelete as string, h) })]),
@@ -1142,7 +1612,7 @@ export const program: Program<Model, Message, ClientMessage, Flags, Workspace> =
     LoadUrl: ({ url }) => (typeof url === 'string' ? { load: url } : undefined),
     FocusElement: ({ selector }) => (typeof selector === 'string' ? { focus: selector } : undefined),
   },
-  snapshotDeps: model => [model.picker, model.titleDraft, model.notice],
+  snapshotDeps: model => [model.picker, model.titleDraft, model.notice, model.db],
 }
 
 export { PICKER_INPUT_ID, checkedIndex, subtreeOf }
