@@ -126,7 +126,13 @@
 .nb-pre { margin: 0; width: 100%; font-family: var(--font-mono, ui-monospace, monospace); font-size: 14px; white-space: pre; overflow-x: auto; }
 .nb-pre.nb-wrap { white-space: pre-wrap; }
 .nb-divider { flex: 1; border: none; border-top: 1px solid var(--border); margin: 12px 0; }
-.nb-image { max-width: 100%; border-radius: 4px; }
+.nb-image-frame { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 auto; }
+.nb-image { display: block; max-width: 100%; border-radius: 4px; }
+.nb-image-sized { width: 100%; }
+.nb-image-handle { position: absolute; top: 50%; width: 6px; height: 48px; margin-top: -24px; border-radius: 3px; background: var(--foreground); opacity: 0; cursor: col-resize; }
+.nb-image-handle-left { left: 8px; }
+.nb-image-handle-right { right: 8px; }
+@media (hover: hover) { .nb-image-frame:hover > .nb-image-handle { opacity: 0.5; } }
 .nb-media-empty, .nb-equation { flex: 1; padding: 12px; background: var(--muted); border-radius: 4px; color: var(--muted-foreground); cursor: pointer; }
 .nb-equation { text-align: center; font-family: var(--font-mono, ui-monospace, monospace); color: inherit; background: transparent; }
 .nb-bookmark { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px; text-decoration: none; color: inherit; }

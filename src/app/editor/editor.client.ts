@@ -73,6 +73,7 @@ export const Message = defineMessageUnion({
   Composed: { text: S.String },
   PastedBlocks: { blocks: Document },
   Dropped: { ids: S.Array(S.String), targetId: S.String, place: Place },
+  ResizedImage: { blockId: S.String, width: S.Number },
   /** The caret moved by the browser (arrows, clicks) while inputs were still rendering. */
   ReadDomSelection: { selection: Selection },
   Blurred: {},
@@ -82,7 +83,7 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-const MOUNT_TAGS = ['Acted', 'PressedMenuKey', 'TypedMenuChar', 'HoveredMenuItem', 'ChoseMenuItem', 'OpenedLink', 'ToggledCurrent', 'OpenedBlockMenu', 'ClickedControl', 'ClickedTool', 'StartedComposition', 'Composed', 'PastedBlocks', 'Dropped', 'Blurred'] as const
+const MOUNT_TAGS = ['Acted', 'PressedMenuKey', 'TypedMenuChar', 'HoveredMenuItem', 'ChoseMenuItem', 'OpenedLink', 'ToggledCurrent', 'OpenedBlockMenu', 'ClickedControl', 'ClickedTool', 'StartedComposition', 'Composed', 'PastedBlocks', 'Dropped', 'ResizedImage', 'Blurred'] as const
 type MountMessage = Extract<Message, { _tag: (typeof MOUNT_TAGS)[number] }>
 
 // PORT
@@ -216,8 +217,8 @@ const chooseSlash = (model: Model, index: number): Update.Return<Model, Message>
   const chosen = slashItems(menu.query)[index]
   if (chosen === undefined) return act(model, { _tag: 'CloseMenu' })
   const editor = apply(model.editor, { _tag: 'ChooseSlash', tag: chosen.tag, level: chosen.level })
-  const blockId = focusBlock(editor)
-  const target = blockId === null ? null : B.find(editor.doc, blockId)
+  // Blocks without text move the caret on, so the chosen block is the one the menu was opened in.
+  const target = B.find(editor.doc, menu.blockId)
   if (target === null) return commit(model, editor)
   switch (target.kind._tag) {
     case 'SubPage': {
@@ -466,6 +467,11 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
           : { _tag: 'InsertBlocks', blocks: fresh })
       },
       Dropped: ({ ids, targetId, place }) => act(model, { _tag: 'Drop', ids, targetId, place }),
+      ResizedImage: ({ blockId, width }) => {
+        const target = B.find(model.editor.doc, blockId)
+        const clamped = B.imageWidth(width)
+        return target?.kind._tag === 'Image' && clamped !== null ? act(model, { _tag: 'SetKind', blockId, kind: { ...target.kind, width: clamped } }) : { model }
+      },
       ReadDomSelection: ({ selection }) => act(model, { _tag: 'Select', selection }),
       Blurred: () => step(model, Message.DueSave({ seq: model.saveSeq })),
       DueSave: ({ seq }) =>
@@ -537,7 +543,7 @@ const plainOf = (blocks: ReadonlyArray<Block>): string =>
 
 const EditPage = Mount.defineStream('EditPage', {
   args: { pageId: S.String },
-  messages: [Message.Acted, Message.PressedMenuKey, Message.TypedMenuChar, Message.HoveredMenuItem, Message.ChoseMenuItem, Message.OpenedLink, Message.ToggledCurrent, Message.OpenedBlockMenu, Message.ClickedControl, Message.ClickedTool, Message.StartedComposition, Message.Composed, Message.PastedBlocks, Message.Dropped, Message.Blurred],
+  messages: [Message.Acted, Message.PressedMenuKey, Message.TypedMenuChar, Message.HoveredMenuItem, Message.ChoseMenuItem, Message.OpenedLink, Message.ToggledCurrent, Message.OpenedBlockMenu, Message.ClickedControl, Message.ClickedTool, Message.StartedComposition, Message.Composed, Message.PastedBlocks, Message.Dropped, Message.ResizedImage, Message.Blurred],
   execute: ({ element, pageId }) =>
     Stream.callback<MountMessage>(queue =>
       Effect.gen(function* () {
@@ -557,6 +563,7 @@ const EditPage = Mount.defineStream('EditPage', {
         }
         // Block selections own the DOM selection until a person points into text again.
         let isPointing = false
+        let resize: { blockId: string; x: number; width: number; side: number; frame: HTMLElement } | null = null
         let drag: { blockId: string; x: number; y: number; isDragging: boolean; target: Element | null; place: B.DropPlace } | null = null
 
         const listeners: ReadonlyArray<readonly [EventTarget, string, (event: Event) => void]> = [
@@ -698,6 +705,13 @@ const EditPage = Mount.defineStream('EditPage', {
           [host, 'pointerdown', event => {
             const pointer = event as PointerEvent
             isPointing = (pointer.target as Element).closest('[data-text-of]') !== null
+            const edge = (pointer.target as Element).closest('[data-action="image-resize"]')
+            const frame = edge?.closest<HTMLElement>('.nb-image-frame') ?? null
+            if (edge !== null && frame !== null && pointer.button === 0) {
+              pointer.preventDefault()
+              resize = { blockId: edge.getAttribute('data-block') ?? '', x: pointer.clientX, width: frame.getBoundingClientRect().width, side: edge.getAttribute('data-side') === 'left' ? -1 : 1, frame }
+              return
+            }
             const grip = (pointer.target as Element).closest('[data-action="handle"]')
             if (grip === null || pointer.button !== 0) return
             pointer.preventDefault()
@@ -705,6 +719,11 @@ const EditPage = Mount.defineStream('EditPage', {
           }],
           [document, 'pointermove', event => {
             const pointer = event as PointerEvent
+            if (resize !== null) {
+              // Images are centered, so an edge moves half of the change in width.
+              resize.frame.style.width = `${B.imageWidth(resize.width + resize.side * 2 * (pointer.clientX - resize.x)) ?? resize.width}px`
+              return
+            }
             if (drag === null) return
             if (!drag.isDragging && Math.hypot(pointer.clientX - drag.x, pointer.clientY - drag.y) < 4) return
             drag.isDragging = true
@@ -721,6 +740,11 @@ const EditPage = Mount.defineStream('EditPage', {
             over.classList.add(DROP_CLASS[drag.place])
           }],
           [document, 'pointerup', () => {
+            if (resize !== null) {
+              const { blockId, frame } = resize
+              resize = null
+              return offer(Message.ResizedImage({ blockId, width: frame.getBoundingClientRect().width }))
+            }
             if (drag === null) return
             const { blockId, isDragging, target, place } = drag
             drag = null

@@ -100,3 +100,12 @@ describe('table cells', () => {
     expect(B.addColumn(kind).rows).toEqual([[T.plain('a'), [], []]])
   })
 })
+
+describe('image width', () => {
+  it('a resize sets whole pixels from 80 to 2000', () => {
+    expect(B.imageWidth(312.6)).toBe(313)
+    expect(B.imageWidth(10)).toBe(80)
+    expect(B.imageWidth(5000)).toBe(2000)
+    expect(B.imageWidth(Number.NaN)).toBeNull()
+  })
+})

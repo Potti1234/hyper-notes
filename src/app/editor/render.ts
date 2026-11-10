@@ -156,7 +156,13 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
     case 'Divider': return [h.hr([h.Class('nb-divider'), h.Attribute('contenteditable', 'false')])]
     case 'Image': return [kind.url === ''
       ? control(h, 'media-url', target.id, 'nb-media-empty', ['Add an image'])
-      : h.img([h.Class('nb-image'), h.Src(kind.url), h.Alt(''), h.Attribute('contenteditable', 'false')])]
+      : h.div([h.Class('nb-image-frame'), h.Attribute('contenteditable', 'false'), ...(kind.width === null ? [] : [h.Style({ width: `${kind.width}px` })])], [
+          h.img([h.Class(kind.width === null ? 'nb-image' : 'nb-image nb-image-sized'), h.Src(kind.url), h.Alt('')]),
+          ...(ctx.isEditable ? (['left', 'right'] as const).map(side => h.span([
+            h.Class(side === 'left' ? 'nb-image-handle nb-image-handle-left' : 'nb-image-handle nb-image-handle-right'),
+            h.Attribute('data-action', 'image-resize'), h.Attribute('data-block', target.id), h.Attribute('data-side', side),
+          ], [])) : []),
+        ])]
     case 'Bookmark':
     case 'Embed': return [kind.url === ''
       ? control(h, 'media-url', target.id, 'nb-media-empty', [kind._tag === 'Bookmark' ? 'Add a web bookmark' : 'Embed a link'])

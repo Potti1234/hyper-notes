@@ -75,6 +75,9 @@ export const addRow = (kind: TableKind): TableKind => ({ ...kind, rows: [...kind
 
 export const addColumn = (kind: TableKind): TableKind => ({ ...kind, rows: kind.rows.map(row => [...row, []]) })
 
+/** An image width a resize may set: whole pixels from 80 to 2000. */
+export const imageWidth = (width: number): number | null => (Number.isFinite(width) ? Math.round(Math.min(2000, Math.max(80, width))) : null)
+
 export const find = (doc: Document, id: string): Block | null => {
   const cell = parseCell(id)
   if (cell !== null) {

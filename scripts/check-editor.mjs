@@ -222,6 +222,31 @@ try {
   await settle()
   check('+ adds a column', (await cells()).length === 16, String((await cells()).length))
 
+  await page.route(`${base}/check-photo.svg`, route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#8ab"/></svg>' }))
+  await page.hover(`${ROOT} [data-kind="Table"]`)
+  await page.locator(`${ROOT} [data-kind="Table"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.type('image')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  await page.keyboard.type(`${base}/check-photo.svg`)
+  await page.keyboard.press('Enter')
+  await settle()
+  const frame = page.locator(`${ROOT} .nb-image-frame`)
+  check('"/image" and a link adds the image', await page.locator(`${ROOT} img.nb-image[src="${base}/check-photo.svg"]`).count() === 1, await where())
+  const wide = (await frame.boundingBox())?.width ?? 0
+  await frame.hover()
+  const edge = await page.locator(`${ROOT} .nb-image-handle-right`).boundingBox()
+  if (edge !== null) {
+    await page.mouse.move(edge.x + 3, edge.y + 24)
+    await page.mouse.down()
+    await page.mouse.move(edge.x - 97, edge.y + 24, { steps: 5 })
+    await page.mouse.up()
+  }
+  await settle()
+  const narrow = (await frame.boundingBox())?.width ?? 0
+  check('dragging an image edge resizes it from both sides', Math.abs(wide - 200 - narrow) <= 2 && (await frame.getAttribute('style'))?.includes(`${Math.round(narrow)}px`), `${wide} → ${narrow}`)
+
   // Saved: the content survives a reload.
   const before = await blocks()
   await page.waitForTimeout(1200)
