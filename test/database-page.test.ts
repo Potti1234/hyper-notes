@@ -32,6 +32,23 @@ describe('page: databases', () => {
     assert.isNull(tasks.parentDatabase)
   })
 
+  it('the description saves trimmed on Enter or leaving it, only when it changed and the page is editable', () => {
+    const typed = send(model('demo-tasks'), PagePage.Message.ChangedDescription({ text: '  Everything   we ship  ' }))
+    assert.strictEqual(typed.model.descriptionDraft, '  Everything   we ship  ')
+    const saved = send(typed.model, PagePage.Message.SubmittedDescription())
+    assert.isNull(saved.model.descriptionDraft)
+    assert.deepInclude(argsOf(saved, 'ChangeDatabase'), { pageId: 'demo-tasks', change: { _tag: 'SetDescription', text: '  Everything   we ship  ' } })
+    const database = model('demo-tasks').page!.database!
+    const applied = D.applyChange(database, { _tag: 'SetDescription', text: '  Everything   we ship  ' }, prefix => prefix)
+    assert.strictEqual(typeof applied === 'string' ? applied : applied.database.description, 'Everything we ship')
+    const described = model('demo-tasks', page => ({ ...page, database: { ...page.database!, description: 'Same' } }))
+    assert.deepStrictEqual(names(send(described, PagePage.Message.ChangedDescription({ text: ' Same ' }), PagePage.Message.SubmittedDescription())), [])
+    assert.deepStrictEqual(names(send(model('demo-tasks'), PagePage.Message.SubmittedDescription())), [])
+    const locked = model('demo-tasks', page => ({ ...page, isLocked: true }))
+    assert.deepStrictEqual(names(send(locked, PagePage.Message.ChangedDescription({ text: 'Nope' }), PagePage.Message.SubmittedDescription())), [])
+    assert.strictEqual(send(model('demo-tasks'), PagePage.Message.ChangedDescription({ text: 'x'.repeat(D.MAX_DESCRIPTION + 10) })).model.descriptionDraft?.length, D.MAX_DESCRIPTION)
+  })
+
   it('a row page knows its database, for the properties under its title', () => {
     const row = model('demo-task-1')
     assert.strictEqual(row.parentDatabase?.id, 'demo-tasks')

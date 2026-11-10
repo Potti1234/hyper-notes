@@ -505,6 +505,11 @@ try {
   // DATABASE VIEWS: board, list, gallery and calendar over the seeded Tasks database.
   await visit(avery.page, '/p/demo-tasks')
   await visit(morgan.page, '/p/demo-tasks')
+  await avery.page.locator('#database-description').click()
+  await avery.page.keyboard.type('Everything we ship this cycle')
+  await settle(avery.page)
+  await avery.page.keyboard.press('Enter')
+  check('a database description saves and reaches the other person', await until(morgan.page, () => document.querySelector('#database-description')?.value === 'Everything we ship this cycle'))
   const addView = async (page, label) => {
     await page.locator('#add-view').click()
     await until(page, () => document.querySelector('#picker[data-field="addView"]') !== null)

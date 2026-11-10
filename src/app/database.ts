@@ -160,7 +160,9 @@ export type DatabaseView = typeof DatabaseView.Type
 
 export const openInOf = (view: DatabaseView): OpenIn => view.openIn ?? 'side'
 
-export const Database = S.Struct({ properties: S.Array(Property), views: S.Array(DatabaseView) })
+export const MAX_DESCRIPTION = 2000
+
+export const Database = S.Struct({ properties: S.Array(Property), views: S.Array(DatabaseView), description: S.optionalKey(S.String) })
 export type Database = typeof Database.Type
 
 /** What a view needs to know about a row. */
@@ -669,6 +671,7 @@ export const valuesForNew = (database: Database, view: DatabaseView): Values => 
 
 /** One change to a database's properties or views, as a page posts it. */
 export const DatabaseChange = S.Union([
+  S.TaggedStruct('SetDescription', { text: S.String }),
   S.TaggedStruct('AddProperty', {
     tag: S.String,
     name: S.String,
@@ -737,6 +740,8 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
   }
   const isProperty = (propertyId: string) => propertyId === TITLE || propertyOf(database, propertyId) !== null
   switch (change._tag) {
+    case 'SetDescription':
+      return { database: { ...database, description: change.text.replace(/\s+/g, ' ').trim().slice(0, MAX_DESCRIPTION) }, addedId: null }
     case 'AddProperty': {
       if (!isPropertyTag(change.tag)) return 'That property type does not exist.'
       if (database.properties.length >= MAX_PROPERTIES) return `A database holds up to ${MAX_PROPERTIES} properties.`

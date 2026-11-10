@@ -117,7 +117,7 @@ emoji.
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Database page | Title + description, view tabs, "New" button (with ▾ templates), Filter, Sort, Search 🔍, `•••` (properties, layout, group) | ✅ title, view tabs, New, Filter, Sort, Search, view menu; description and templates ⏳ |
+| Database page | Title + description, view tabs, "New" button (with ▾ templates), Filter, Sort, Search 🔍, `•••` (properties, layout, group) | ✅ title, description, view tabs, New, Filter, Sort, Search, view menu; templates ⏳ |
 | Rows are pages | Open as side peek (default), centre peek or full page; peek shows properties above the page body | ✅ (page body is edited on the full page) |
 | Properties | Text, Number (format), Select, Multi-select (coloured options, create on type), Status (To do / In progress / Done groups), Date (range, time), Person, Checkbox, URL, Email, Phone, Created time, Created by, Last edited time, Last edited by, ID; Formula, Relation, Rollup, Files (✗ first version) | ✅ all listed; Files ✗ |
 | Table view | Column headers with type icon; click header → menu (rename, type, sort asc/desc, filter, hide, insert left/right, duplicate, delete); resize by dragging; cell editing in place; "+ New" row at the bottom; row hover handle with Open; calculations footer (count, …) | ✅ |

@@ -140,6 +140,8 @@ export const Model = S.Struct({
   /** Log out was chosen: the view renders the POST /logout form public/sign-out.js submits. */
   isSigningOut: S.Boolean,
   titleDraft: S.NullOr(S.String),
+  /** The database description being typed, until it is saved. */
+  descriptionDraft: S.NullOr(S.String),
   notice: S.NullOr(S.String),
   focus: S.NullOr(FocusRequest),
   seq: S.Number,
@@ -165,6 +167,8 @@ export const Message = defineMessageUnion({
   ChosePicker: { value: S.String },
   ClosedPicker: {},
   ChangedTitle: { title: S.String },
+  ChangedDescription: { text: S.String },
+  SubmittedDescription: {},
   SubmittedTitle: {},
   /** The editor island's content, a new sub-page, a page to open. */
   GotEditorEvent: { event: EditorEvent },
@@ -294,6 +298,7 @@ export const ClientMessage = S.Union([
   Message.ChosePicker,
   Message.ClosedPicker,
   Message.SubmittedTitle,
+  Message.SubmittedDescription,
   Message.GotEditorEvent,
   Message.ClickedFavorite,
   Message.ClickedAddIcon,
@@ -678,7 +683,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, inboxSeenBefore: flags.me.inboxSeenAt ?? 0, isSigningOut: false, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, inboxSeenBefore: flags.me.inboxSeenAt ?? 0, isSigningOut: false, descriptionDraft: null, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
   commands: flags.view === 'inbox' ? [MarkInboxSeen({ memberId: flags.me.id })] : [],
 })
 
@@ -1740,6 +1745,14 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
       ChosePicker: ({ value }) => (model.picker === null ? { model } : choose(model, model.picker, value)),
       ClosedPicker: () => ({ model: { ...model, picker: null } }),
       ChangedTitle: ({ title }) => ({ model: { ...model, titleDraft: title } }),
+      ChangedDescription: ({ text }) => ({ model: { ...model, descriptionDraft: text.slice(0, D.MAX_DESCRIPTION) } }),
+      SubmittedDescription: () => {
+        const page = changeable(model)
+        const closed = { ...model, descriptionDraft: null }
+        return page?.database == null || model.descriptionDraft === null || model.descriptionDraft.trim() === (page.database.description ?? '')
+          ? { model: closed }
+          : changeDb(closed, page, { _tag: 'SetDescription', text: model.descriptionDraft })
+      },
       GotEditorEvent: ({ event }) => {
         const { page } = model
         if (page === null || event.pageId !== page.id || model.isInTrash || page.isLocked) return { model }
@@ -2086,6 +2099,11 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
               box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [
                   input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'title', isReadOnly: !isEditable, onInput: title => Message.ChangedTitle({ title }) }, h),
                 ] }, h),
+              ...(page.database === null || (!isEditable && (page.database.description ?? '') === '')
+                ? []
+                : [box({ as: 'form', attributes: [h.Id('description-form'), h.OnSubmit(Message.SubmittedDescription()), h.OnFocusLeave(Message.SubmittedDescription())], children: [
+                      input({ id: 'database-description', value: model.descriptionDraft ?? page.database.description ?? '', placeholder: 'Add a description…', ariaLabel: 'Database description', autocomplete: 'off', variant: 'description', isReadOnly: !isEditable, onInput: text => Message.ChangedDescription({ text }) }, h),
+                    ] }, h)]),
             ] }, h),
           ...backlinksView(model, h),
           ...commentsView(model, h),
@@ -2349,7 +2367,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.coverDraft, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.activeThread, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.coverDraft, model.titleDraft, model.descriptionDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.activeThread, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.confirmDelete === null ? [] : [region(h, { id: 'confirm-delete-layer', deps: [model.confirmDelete, model.trash], render: () => confirmDeleteView(model, model.confirmDelete as string, h) })]),
