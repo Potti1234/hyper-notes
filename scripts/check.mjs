@@ -84,9 +84,12 @@ try {
   await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
   // A click that lands while the sidebar region is being swapped can be lost; say so and click once more.
   if (!(await avery.page.waitForFunction(() => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null, null, { timeout: 2000 }).then(() => true, () => false))) {
-    console.log('NOTE the close click was lost; clicking again')
-    await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
-    await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+    // Only a toggle that still says Close may be clicked again: a slow close renders "Open", and clicking that would reopen it.
+    if (await avery.page.evaluate(() => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label')?.startsWith('Close') === true)) {
+      console.log('NOTE the close click was lost; clicking again')
+      await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
+      await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+    }
   }
   check('closing hides them again', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null))
 
@@ -242,6 +245,36 @@ try {
   check('a locked page hides the cover controls', await until(avery.page, () => document.querySelector('#change-cover') === null && document.querySelector('#add-icon') === null))
   await avery.page.locator('#page-locked').click()
   check('Locked unlocks it again', await until(avery.page, () => document.querySelector('#page-locked') === null && document.querySelector('[data-editor-root]') !== null))
+  await avery.page.hover('#page-cover')
+  await avery.page.locator('#change-cover').click()
+  await until(avery.page, () => document.querySelector('#picker[data-field="cover"]') !== null)
+  await avery.page.keyboard.type('https://example.com/cover.jpg')
+  await choose(avery.page, 'Use this image link')
+  check('an image link becomes the cover', await until(avery.page, () => document.querySelector('#page-cover[data-cover="image"]') !== null))
+  const coverAt = () => avery.page.evaluate(() => Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')))
+  const dragCover = async dy => {
+    const box = await avery.page.locator('#page-cover').boundingBox()
+    await avery.page.mouse.move(box.x + box.width / 3, box.y + box.height / 2)
+    await avery.page.mouse.down()
+    await avery.page.mouse.move(box.x + box.width / 3, box.y + box.height / 2 + dy, { steps: 5 })
+    await avery.page.mouse.up()
+  }
+  await avery.page.hover('#page-cover')
+  await avery.page.locator('#reposition-cover').click()
+  check('Reposition shows "Drag image to reposition"', await until(avery.page, () => document.querySelector('#page-cover[data-reposition-cover]') !== null && document.querySelector('#save-cover-position') !== null && document.querySelector('#change-cover') === null))
+  const coverBefore = await coverAt()
+  await dragCover(60)
+  check('dragging the image down shows more of its top', await until(avery.page, start => Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')) < start, coverBefore))
+  await avery.page.keyboard.press('Escape')
+  check('Esc cancels and puts it back', await until(avery.page, start => document.querySelector('[data-reposition-cover]') === null && Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')) === start, coverBefore))
+  await avery.page.hover('#page-cover')
+  await avery.page.locator('#reposition-cover').click()
+  await until(avery.page, () => document.querySelector('[data-reposition-cover]') !== null)
+  await dragCover(-60)
+  await until(avery.page, start => Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')) > start, coverBefore)
+  const coverMoved = await coverAt()
+  await avery.page.locator('#save-cover-position').click()
+  check('Save position keeps it, for everyone', await until(avery.page, at => document.querySelector('[data-reposition-cover]') === null && Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')) === at, coverMoved) && await until(morgan.page, at => Number(document.querySelector('#page-cover')?.getAttribute('data-cover-position')) === at, coverMoved))
   await avery.page.hover('#page-cover')
   await avery.page.locator('#remove-cover').click()
   check('Remove takes the cover off', await until(avery.page, () => document.querySelector('#page-cover') === null))
@@ -424,7 +457,7 @@ try {
     await until(page, selector => document.querySelector(selector)?.getAttribute('data-drop-on') === 'true', to)
     await page.locator(to).dispatchEvent('drop', { dataTransfer: transfer })
     await until(page, () => document.querySelector('.nb-db-dragged') === null)
-    if (await page.locator(from).count() > 0) await page.locator(from).dispatchEvent('dragend', { dataTransfer: transfer })
+    await page.evaluate(selector => document.querySelector(selector)?.dispatchEvent(new DragEvent('dragend', { bubbles: true })), from)
   }
   await addView(avery.page, 'Board')
   check('+ Board adds a board grouped by status', await until(avery.page, () => document.querySelector('#database-board')?.getAttribute('data-group-by') === 'demo-status' && document.querySelectorAll('#database-board [data-group]').length === 4))
@@ -666,7 +699,7 @@ try {
     await avery.page.waitForFunction(isReady, arg, { timeout: TIMEOUT })
     await avery.page.locator(to).dispatchEvent('drop', { dataTransfer: transfer })
     await until(avery.page, () => document.querySelector('[data-nav-dragging]') === null)
-    if (await avery.page.locator(navRowAt(from)).count() > 0) await avery.page.locator(navRowAt(from)).dispatchEvent('dragend', { dataTransfer: transfer })
+    await avery.page.evaluate(selector => document.querySelector(selector)?.dispatchEvent(new DragEvent('dragend', { bubbles: true })), navRowAt(from))
   }
   await until(avery.page, ids => ids.every(id => document.querySelector(`#sidebar [data-nav-row="${id}"][data-nav-section="private"]`) !== null), [first, second])
   await dragRow(second, `#nav-before-private-${first}`, id => document.querySelector(`[data-nav-row="${id}"][data-nav-section="private"]`)?.getAttribute('data-nav-drop-on') === 'before', first)

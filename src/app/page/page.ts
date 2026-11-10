@@ -25,7 +25,7 @@ import * as D from '../database'
 import { MAX_FORMULA, parse as parseFormula } from '../formula'
 import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
-import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
+import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverPosition, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
 import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
@@ -117,6 +117,8 @@ export const Model = S.Struct({
   /** Every database a relation can point to. */
   databases: S.Array(LinkedPage),
   db: DatabaseUi,
+  /** Where an image cover is being dragged to, before "Save position". */
+  coverDraft: S.NullOr(S.Number),
   picker: S.NullOr(Picker),
   titleDraft: S.NullOr(S.String),
   notice: S.NullOr(S.String),
@@ -153,6 +155,10 @@ export const Message = defineMessageUnion({
   ClickedAddCover: {},
   ClickedCover: {},
   ClickedRemoveCover: {},
+  ClickedReposition: {},
+  MovedCover: { position: S.Number },
+  ClickedSaveCover: {},
+  ClickedCancelCover: {},
   ClickedPageOptions: {},
   ClickedUnlock: {},
   ClickedRestore: { pageId: S.String },
@@ -270,6 +276,10 @@ export const ClientMessage = S.Union([
   Message.ClickedAddCover,
   Message.ClickedCover,
   Message.ClickedRemoveCover,
+  Message.ClickedReposition,
+  Message.MovedCover,
+  Message.ClickedSaveCover,
+  Message.ClickedCancelCover,
   Message.ClickedPageOptions,
   Message.ClickedUnlock,
   Message.ClickedRestore,
@@ -633,7 +643,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -1703,6 +1713,20 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
         const page = changeable(model)
         return page === null || page.cover._tag === 'NoCover' ? { model } : change(model, page, { _tag: 'SetCover', cover: { _tag: 'NoCover' } })
       },
+      ClickedReposition: () => {
+        const page = changeable(model)
+        return page === null || page.cover._tag !== 'ImageCover' ? { model } : { model: { ...model, picker: null, coverDraft: page.coverPosition } }
+      },
+      MovedCover: ({ position }) =>
+        model.coverDraft === null || !Number.isFinite(position) ? { model } : { model: { ...model, coverDraft: coverPosition(position) } },
+      ClickedSaveCover: () => {
+        const page = changeable(model)
+        const done = { ...model, coverDraft: null }
+        return page === null || model.coverDraft === null || page.cover._tag !== 'ImageCover' || model.coverDraft === page.coverPosition
+          ? { model: done }
+          : change(done, page, { _tag: 'SetCoverPosition', position: model.coverDraft })
+      },
+      ClickedCancelCover: () => ({ model: { ...model, coverDraft: null } }),
       ClickedPageOptions: () => {
         const page = changeable(model, true)
         return page === null ? { model } : { model: withPicker(model, openPicker('options', page.id, OPTIONS_ANCHOR)) }
@@ -1838,6 +1862,10 @@ const HEADER_ACTIONS: HeaderActions<Message> = {
   onAddCover: Message.ClickedAddCover(),
   onCover: Message.ClickedCover(),
   onRemoveCover: Message.ClickedRemoveCover(),
+  onReposition: Message.ClickedReposition(),
+  onMoveCover: position => Message.MovedCover({ position }),
+  onSaveCover: Message.ClickedSaveCover(),
+  onCancelCover: Message.ClickedCancelCover(),
   onAddComment: Message.ClickedAddComment(),
 }
 
@@ -1920,7 +1948,7 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
       ...(page.isSmallText ? [h.DataAttribute('small-text', '')] : []),
       ...(page.isFullWidth ? [h.DataAttribute('full-width', '')] : []),
     ], children: [
-      ...coverView(page, isEditable, HEADER_ACTIONS, h),
+      ...coverView(page, isEditable, HEADER_ACTIONS, h, model.coverDraft),
       box({ as: 'article', class: cn('mx-auto w-full pb-40', page.isFullWidth ? 'max-w-none px-24' : 'max-w-[708px] px-6', hasCover ? 'pt-0' : 'pt-20'), children: [
           box({ as: 'header', class: 'group/header', children: [
               ...iconAndControls(page, isEditable, canComment(model) && model.composer?._tag !== 'NewDiscussion', HEADER_ACTIONS, h),
@@ -2117,6 +2145,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         { keys: 'Mod+Alt+N', message: Message.ClickedAdd({ parentId: null, section: 'private' }), isEnabled: model.picker === null, whileTyping: 'Allow' },
         { keys: 'Mod+\\', message: Message.ToggledSidebar({ isCollapsed: model.me.isSidebarCollapsed !== true }), whileTyping: 'Allow' },
         { keys: 'Mod+Shift+L', message: Message.ClickedToggleTheme(), whileTyping: 'Allow' },
+        { keys: 'Escape', message: Message.ClickedCancelCover(), isEnabled: model.coverDraft !== null && model.picker === null },
       ]),
       region(h, {
         id: 'sidebar',
@@ -2151,7 +2180,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.coverDraft, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.confirmDelete === null ? [] : [region(h, { id: 'confirm-delete-layer', deps: [model.confirmDelete, model.trash], render: () => confirmDeleteView(model, model.confirmDelete as string, h) })]),
