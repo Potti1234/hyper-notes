@@ -247,6 +247,31 @@ try {
   const narrow = (await frame.boundingBox())?.width ?? 0
   check('dragging an image edge resizes it from both sides', Math.abs(wide - 200 - narrow) <= 2 && (await frame.getAttribute('style'))?.includes(`${Math.round(narrow)}px`), `${wide} → ${narrow}`)
 
+  await page.hover(`${ROOT} [data-kind="Image"]`)
+  await page.locator(`${ROOT} [data-kind="Image"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Backspace')
+  await page.keyboard.type('> Details')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('hidden')
+  await settle()
+  const inside = `${ROOT} [data-kind="Toggle"] [data-block-id]`
+  check('"> " makes a toggle and Enter writes inside it', (await page.locator(inside).allTextContents()).join('') === 'hidden', await kinds())
+  await page.locator(`${ROOT} [data-kind="Toggle"] [data-action="toggle-open"]`).click()
+  await settle()
+  check('the toggle arrow closes it', await page.locator(inside).count() === 0)
+  await page.locator(`${ROOT} [data-kind="Toggle"] [data-action="toggle-open"]`).click()
+  await settle()
+  check('and opens it again', await page.locator(inside).count() === 1)
+
+  await page.hover(`${ROOT} [data-kind="Toggle"] > .nb-row`)
+  await page.locator(`${ROOT} [data-kind="Toggle"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.type('page')
+  await page.keyboard.press('Enter')
+  const subPage = await page.waitForFunction(() => document.querySelector('[data-editor-root] [data-kind="SubPage"] .nb-page-link-title')?.textContent === 'Untitled', null, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('"/page" creates a sub-page and links it', subPage, await kinds())
+
   // Saved: the content survives a reload.
   const before = await blocks()
   await page.waitForTimeout(1200)
