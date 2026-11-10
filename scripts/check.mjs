@@ -464,7 +464,21 @@ try {
   await choose(avery.page, 'Status')
   check('grouping the table puts rows under status headers', await until(avery.page, () => [...document.querySelectorAll('#database-table [data-group]')].map(group => group.getAttribute('data-group')).join(',') === 'demo-todo,demo-doing,demo-done,' && document.querySelector('#database-table [data-count="demo-done"]')?.textContent === '2'))
 
+  // ID: an ID property numbers every row, for everyone.
+  await avery.page.locator('#add-property').click()
+  await choose(avery.page, 'ID')
+  await until(avery.page, () => [...document.querySelectorAll('#database-table [role="columnheader"]')].some(head => head.textContent === 'ID'))
+  const idProperty = await propertyId(avery.page, 'ID')
+  await avery.page.keyboard.press('Escape')
+  await until(avery.page, () => document.querySelector('#picker') === null)
+  check('an ID property numbers every row', await until(morgan.page, prop => {
+    const cells = [...document.querySelectorAll(`#database-table [id^="cell-"][id$="-${prop}"]`)]
+    return cells.length > 0 && cells.every(cell => /^\d+$/.test(cell.textContent ?? ''))
+  }, idProperty))
+
   // COLUMN WIDTHS: dragging a header's edge resizes the column for everyone.
+  // Adding a property scrolls the table to its new column; bring the title back into view.
+  await avery.page.evaluate(() => { document.querySelector('#database-table').scrollLeft = 0 })
   const edge = await avery.page.locator('#database-table [data-resize-column="title"]').boundingBox()
   await avery.page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2)
   await avery.page.mouse.down()
@@ -475,7 +489,7 @@ try {
 
   // ROW PEEKS: side and center peeks edit a row over its database; full page links to it.
   await avery.page.locator('#open-demo-task-2').click()
-  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 4 && document.activeElement?.id === 'peek-close'))
+  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 5 && document.activeElement?.id === 'peek-close'))
   await avery.page.locator('#peek-cell-demo-task-2-demo-status').click()
   await until(avery.page, () => document.querySelector('#picker[data-field="cell"]') !== null)
   await choose(avery.page, 'Not started')

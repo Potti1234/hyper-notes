@@ -1,7 +1,7 @@
 import { Data, Effect, Schema as S } from 'effect'
 
 import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW } from './domain'
-import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf } from './database'
+import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf, nextId, numberRows } from './database'
 import { copyWithIds } from './editor/blocks'
 import { type Block, Document } from './editor/schema'
 
@@ -333,7 +333,9 @@ export const changeDatabase = (pageId: string, change: DatabaseChange, actorId: 
     if (typeof changed === 'string') return yield* invalid(changed)
     if (changed.database === page.database) return [changed.addedId, data] as const
     const next: Page = { ...page, database: changed.database, updatedBy: actorId, updatedAt: at }
-    return [changed.addedId, { ...data, pages: replacePages(data.pages, [next]) }] as const
+    const rows = childrenOf(data.pages, page.id)
+    const numbered = numberRows(changed.database, rows).filter((row, index) => row !== rows[index])
+    return [changed.addedId, { ...data, pages: replacePages(data.pages, [next, ...numbered]) }] as const
   })
 
 const databaseOf = (data: WorkspaceData, row: Page) => {
@@ -367,6 +369,10 @@ export const addRow = (databaseId: string, input: Readonly<{ title: string; valu
       if (property === null) continue
       const checked = checkValue(property, value, data.members)
       if (typeof checked !== 'string') values[propertyId] = checked
+    }
+    const rows = childrenOf(data.pages, parent.id)
+    for (const property of parent.database.properties) {
+      if (property.type._tag === 'Id') values[property.id] = { _tag: 'NumberValue', value: nextId(property, rows) }
     }
     return yield* createPage({ parentId: parent.id, section: parent.section, title: input.title, beforeId: input.beforeId, values }, actorId)(data, context)
   })

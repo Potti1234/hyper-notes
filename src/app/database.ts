@@ -36,16 +36,18 @@ export const PropertyType = S.Union([
   S.TaggedStruct('CreatedBy', {}),
   S.TaggedStruct('LastEditedTime', {}),
   S.TaggedStruct('LastEditedBy', {}),
+  /** Numbers rows 1, 2, 3… as they are created; shown as `prefix-n` when there is a prefix. */
+  S.TaggedStruct('Id', { prefix: S.String }),
 ])
 export type PropertyType = typeof PropertyType.Type
 export type PropertyTag = PropertyType['_tag']
 
-export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy']
+export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id']
 export const isPropertyTag = (tag: string): tag is PropertyTag => (PROPERTY_TAGS as ReadonlyArray<string>).includes(tag)
 
 export const TYPE_LABEL: Readonly<Record<PropertyTag, string>> = {
   Text: 'Text', Number: 'Number', Select: 'Select', MultiSelect: 'Multi-select', Status: 'Status', Date: 'Date', Person: 'Person', Checkbox: 'Checkbox',
-  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by',
+  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID',
 }
 
 export const Property = S.Struct({ id: S.String, name: S.String, type: PropertyType })
@@ -148,6 +150,7 @@ const STATUS_OPTIONS = (id: (prefix: string) => string): ReadonlyArray<StatusOpt
 export const typeOf = (tag: PropertyTag, id: (prefix: string) => string, keep?: PropertyType): PropertyType => {
   const options = keep !== undefined && 'options' in keep ? keep.options.map(({ id: optionId, name, color }) => ({ id: optionId, name, color })) : []
   switch (tag) {
+    case 'Id': return { _tag: 'Id', prefix: '' }
     case 'Number': return { _tag: 'Number', format: 'number' }
     case 'Select': return { _tag: 'Select', options }
     case 'MultiSelect': return { _tag: 'MultiSelect', options }
@@ -191,7 +194,7 @@ export const valueOf = (property: Property, row: Row): Value | null => {
   if (value === undefined) return null
   switch (property.type._tag) {
     case 'Text': case 'Url': case 'Email': case 'Phone': return value._tag === 'TextValue' && value.text !== '' ? value : null
-    case 'Number': return value._tag === 'NumberValue' ? value : null
+    case 'Number': case 'Id': return value._tag === 'NumberValue' ? value : null
     case 'Select': case 'Status': return value._tag === 'OptionValue' && optionsOf(property).some(option => option.id === value.optionId) ? value : null
     case 'MultiSelect': {
       if (value._tag !== 'OptionsValue') return null
@@ -205,6 +208,27 @@ export const valueOf = (property: Property, row: Row): Value | null => {
   }
 }
 
+export const idText = (prefix: string, n: number): string => (prefix === '' ? String(n) : `${prefix}-${n}`)
+
+/** The number the next row gets for an ID property: one past the highest so far (trashed rows included). */
+export const nextId = (property: Property, rows: ReadonlyArray<Row>): number =>
+  rows.reduce((top, row) => {
+    const value = valueOf(property, row)
+    return value?._tag === 'NumberValue' ? Math.max(top, value.value) : top
+  }, 0) + 1
+
+/** Rows without an ID get the next numbers, oldest first, as when Notion adds an ID property. */
+export const numberRows = <R extends Row>(database: Database, rows: ReadonlyArray<R>): ReadonlyArray<R> =>
+  database.properties.reduce<ReadonlyArray<R>>((next, property) => {
+    if (property.type._tag !== 'Id') return next
+    let top = nextId(property, next) - 1
+    const numbers = new Map(next.filter(row => valueOf(property, row) === null).sort((a, b) => a.createdAt - b.createdAt).map(row => [row.id, ++top]))
+    return numbers.size === 0 ? next : next.map(row => {
+      const n = numbers.get(row.id)
+      return n === undefined ? row : { ...row, values: { ...row.values, [property.id]: { _tag: 'NumberValue', value: n } } }
+    })
+  }, rows)
+
 const isoDay = (at: number): string => new Date(at).toISOString().slice(0, 10)
 
 /** Values as plain words, for filters, sorting and search. */
@@ -216,6 +240,7 @@ export const textOf = (property: Property | null, row: Row, people: ReadonlyArra
     case 'LastEditedTime': return isoDay(row.updatedAt)
     case 'CreatedBy': return name(row.createdBy)
     case 'LastEditedBy': return name(row.updatedBy)
+    case 'Id': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? idText(property.type.prefix, value.value) : '' }
     default: break
   }
   const value = valueOf(property, row)
@@ -278,6 +303,8 @@ export const checkValue = (property: Property, value: Value, people: ReadonlyArr
         : 'Pick people from the workspace.'
     case 'Checkbox':
       return value._tag === 'CheckboxValue' ? value : 'That value does not fit this property.'
+    case 'Id':
+      return 'IDs are numbered by themselves.'
     default:
       return 'This property fills itself in.'
   }
@@ -297,7 +324,7 @@ export const parseNumber = (text: string, format: NumberFormat): number | null |
 
 export const operatorsFor = (property: Property | null): ReadonlyArray<Operator> => {
   switch (property?.type._tag ?? 'Title') {
-    case 'Number': return ['is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
+    case 'Number': case 'Id': return ['is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
     case 'Select': case 'Status': return ['is', 'isNot', 'isEmpty', 'isNotEmpty']
     case 'MultiSelect': case 'Person': case 'CreatedBy': case 'LastEditedBy': return ['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']
     case 'Date': case 'CreatedTime': case 'LastEditedTime': return ['is', 'before', 'after', 'isEmpty', 'isNotEmpty']
@@ -331,7 +358,7 @@ export const matchesFilter = (database: Database, filter: Filter, row: Row, peop
     const has = idsOf(property, row).includes(filter.value)
     return filter.operator === 'is' || filter.operator === 'contains' ? has : !has
   }
-  if (tag === 'Number') {
+  if (tag === 'Number' || tag === 'Id') {
     const value = property === null ? null : valueOf(property, row)
     const number = value?._tag === 'NumberValue' ? value.value : null
     const wanted = Number(filter.value)
@@ -374,7 +401,7 @@ const sortKey = (database: Database, propertyId: string, row: Row, people: Reado
   switch (property.type._tag) {
     case 'CreatedTime': return row.createdAt
     case 'LastEditedTime': return row.updatedAt
-    case 'Number': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : null }
+    case 'Number': case 'Id': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : null }
     case 'Checkbox': { const value = valueOf(property, row); return value?._tag === 'CheckboxValue' && value.isChecked ? 1 : 0 }
     case 'Select': case 'Status': {
       // Options sort in their own order, as in Notion.

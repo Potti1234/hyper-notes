@@ -93,7 +93,7 @@ export const isTyped = (property: D.Property | null): boolean =>
 
 export const isPicked = (property: D.Property): boolean => ['Select', 'MultiSelect', 'Status', 'Person'].includes(property.type._tag)
 
-export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy'].includes(property.type._tag)
+export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id'].includes(property.type._tag)
 
 /** What a typed cell starts with when it opens. */
 export const draftOf = (property: D.Property | null, row: RowEntry): string => {
@@ -103,7 +103,7 @@ export const draftOf = (property: D.Property | null, row: RowEntry): string => {
 }
 
 export const TYPE_ICON: Readonly<Record<D.PropertyTag | 'Title', string>> = {
-  Title: 'type', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
+  Title: 'type', Id: 'list-ordered', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
   Checkbox: 'square-check', Url: 'link', Email: 'at-sign', Phone: 'pin', CreatedTime: 'clock', CreatedBy: 'user', LastEditedTime: 'clock', LastEditedBy: 'user',
 }
 

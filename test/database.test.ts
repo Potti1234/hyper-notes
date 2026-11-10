@@ -167,6 +167,25 @@ describe('databases: workspace operations', () => {
       assert.isFalse(state.pages.some(entry => entry.id === DEMO_HOME && entry.database !== null))
     })))
 
+  it.effect('ID properties number rows oldest first and keep counting', () =>
+    run(Effect.gen(function* () {
+      const workspace = yield* Workspace
+      const page = yield* workspace.createPage({ parentId: null, section: 'workspace', title: 'Bugs' }, 'avery')
+      yield* workspace.makeDatabase(page.id, 'table', 'avery')
+      const first = yield* workspace.addRow(page.id, { title: 'One', values: {}, beforeId: null }, 'avery')
+      const second = yield* workspace.addRow(page.id, { title: 'Two', values: {}, beforeId: null }, 'avery')
+      const propertyId = (yield* workspace.changeDatabase(page.id, { _tag: 'AddProperty', tag: 'Id', name: '' }, 'avery'))!
+      const state = yield* workspace.current
+      const idOf = (rowId: string) => state.pages.find(entry => entry.id === rowId)?.values[propertyId]
+      assert.deepStrictEqual([idOf(first.id), idOf(second.id)], [{ _tag: 'NumberValue', value: 1 }, { _tag: 'NumberValue', value: 2 }])
+      const third = yield* workspace.addRow(page.id, { title: 'Three', values: { [propertyId]: { _tag: 'NumberValue', value: 99 } }, beforeId: null }, 'avery')
+      assert.deepStrictEqual(third.values[propertyId], { _tag: 'NumberValue', value: 3 })
+      const refused = yield* Effect.flip(workspace.setValue(third.id, propertyId, { _tag: 'NumberValue', value: 7 }, 'avery'))
+      assert.strictEqual(refused.reason, 'IDs are numbered by themselves.')
+      assert.strictEqual(D.idText('BUG', 3), 'BUG-3')
+      assert.strictEqual(D.idText('', 3), '3')
+    })))
+
   it.effect('pages with content, locked or private pages of others cannot change', () =>
     run(Effect.gen(function* () {
       const workspace = yield* Workspace
