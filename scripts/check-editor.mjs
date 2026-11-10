@@ -1,0 +1,327 @@
+import { chromium } from 'playwright'
+
+/* Editor check: drives the page editor in Chromium the way a person types.
+   It creates a page, then checks Markdown shortcuts, Enter/Backspace rules,
+   the slash menu, inline marks and the toolbar, block selection, undo/redo,
+   and that the content survives a reload.
+
+   Usage: node scripts/check-editor.mjs   (URL=… for another server; needs
+   the demo accounts, as npm run check:fresh provides) */
+
+const base = process.env.URL ?? 'http://localhost:4300'
+const TIMEOUT = Number(process.env.CHECK_TIMEOUT ?? 6000)
+const results = []
+const check = (name, ok, detail = '') => {
+  results.push({ name, ok })
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` (${detail})` : ''}`)
+}
+const ROOT = '[data-editor-root]'
+
+const browser = await chromium.launch()
+const errors = []
+try {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const page = await context.newPage()
+  page.on('pageerror', error => errors.push(String(error)))
+  await page.goto(`${base}/`)
+  await page.getByLabel('Email').fill('afinch@hypernotes.example')
+  await page.getByLabel('Password').fill('Avery')
+  const stream = page.waitForRequest(request => request.url().includes('/stream'))
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await stream
+  await page.waitForTimeout(300)
+
+  // A fresh page to type into.
+  await page.locator('#sidebar-new-page').first().click()
+  await page.waitForURL(/\/p\//, { timeout: TIMEOUT })
+  await page.waitForSelector(ROOT, { timeout: TIMEOUT })
+  const url = page.url()
+
+  const blocks = () => page.evaluate(root => [...document.querySelectorAll(`${root} [data-block-id]`)].map(block => ({
+    kind: block.getAttribute('data-kind'),
+    text: block.querySelector('[data-text-of]')?.textContent ?? '',
+  })), ROOT)
+  const kinds = async () => (await blocks()).map(block => block.kind).join(',')
+  const settle = () => page.waitForTimeout(120)
+  const where = () => page.evaluate(() => {
+    const selection = document.getSelection()
+    const at = node => `${node?.parentElement?.closest('[data-block-id]')?.getAttribute('data-kind') ?? '-'}:${node?.textContent?.slice(0, 12)}`
+    return selection === null ? 'none' : `${at(selection.anchorNode)}@${selection.anchorOffset} → ${at(selection.focusNode)}@${selection.focusOffset}`
+  })
+
+  await page.locator(`${ROOT} [data-text-of]`).first().click()
+  await page.keyboard.type('# Title')
+  await settle()
+  let list = await blocks()
+  check('"# " turns the block into a heading', list[0]?.kind === 'Heading' && list[0]?.text === 'Title', JSON.stringify(list[0]))
+
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('- one')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('two')
+  await settle()
+  check('Enter after a heading starts a paragraph; "- " makes a list that continues', (await kinds()) === 'Heading,Bulleted,Bulleted', await kinds())
+
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter')
+  await settle()
+  check('Enter in an empty list item ends the list', (await kinds()) === 'Heading,Bulleted,Bulleted,Paragraph', await kinds())
+
+  await page.keyboard.type('[] task')
+  await settle()
+  check('"[] " makes a to-do', (await kinds()).endsWith('Todo'), await kinds())
+  await page.keyboard.press('Control+Enter')
+  await settle()
+  check('Ctrl+Enter checks the to-do', await page.locator(`${ROOT} .nb-checked`).count() === 1)
+
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Backspace')
+  await settle()
+  check('Backspace at the start of an empty to-do turns it into a paragraph', (await kinds()).endsWith('Todo,Paragraph'), await kinds())
+
+  await page.keyboard.type('Ask @Mor')
+  await page.waitForSelector('[data-overlay="nb-mention-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Enter')
+  await settle()
+  check('"@" and a name mentions the person', (await page.locator(`${ROOT} [data-atom="person"]`).allTextContents()).join('').includes('Morgan'), await where())
+  await page.keyboard.type('about @Eng')
+  await page.waitForSelector('[data-overlay="nb-mention-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Enter')
+  await settle()
+  check('"@" and a title mentions the page', await page.locator(`${ROOT} [data-atom="page"][data-page-id="demo-wiki"]`).count() === 1, await where())
+  await page.keyboard.type('@tomo')
+  await page.waitForSelector('[data-overlay="nb-mention-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Enter')
+  await settle()
+  check('"@tomorrow" mentions the date', await page.locator(`${ROOT} [data-atom="date"]`).count() === 1, await where())
+  await page.keyboard.type(':rock')
+  await page.waitForSelector('[data-overlay="nb-emoji-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Enter')
+  await settle()
+  check('":" and a word inserts the emoji', (await page.locator(`${ROOT} [data-block-id]`).last().textContent())?.includes(String.fromCodePoint(0x1f680)) === true, await where())
+  await page.keyboard.type(' @zzzz')
+  await page.keyboard.press('Escape')
+  await settle()
+  check('Esc closes the mention menu and keeps the text', await page.locator('[data-overlay="nb-mention-menu"]').count() === 0 && (await page.locator(`${ROOT} [data-block-id]`).last().textContent())?.includes('@zzzz') === true)
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+
+  await page.keyboard.type('/quo')
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  check('"/" opens the slash menu filtered by the query', (await page.locator('[data-overlay="nb-slash-menu"] [data-menu-item]').count()) >= 1)
+  await page.keyboard.press('Enter')
+  await settle()
+  check('Enter in the slash menu turns the block into the chosen kind', (await kinds()).endsWith('Quote') && (await page.locator('[data-overlay="nb-slash-menu"]').count()) === 0, await kinds())
+
+  await page.keyboard.type('bold words')
+  await page.keyboard.down('Shift')
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft')
+  await page.keyboard.up('Shift')
+  await settle()
+  check('a text selection shows the inline toolbar', await page.locator('[data-overlay="nb-toolbar"]').count() === 1, await where())
+  await page.keyboard.press('Control+b')
+  await settle()
+  check('Ctrl+B makes the selection bold', (await page.locator(`${ROOT} .nb-b`).allTextContents()).join('') === 'words', `${await where()} ${JSON.stringify((await blocks()).at(-1))}`)
+
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  await page.keyboard.type('example.com')
+  await page.keyboard.press('Enter')
+  await settle()
+  check('Ctrl+K on a selection links it', await page.locator(`${ROOT} a[data-link="https://example.com"]`).allTextContents().then(texts => texts.join('')) === 'words', await where())
+  await page.keyboard.press('End')
+  await page.keyboard.press('ArrowLeft')
+  await page.waitForSelector('[data-overlay="nb-link-card"]', { timeout: TIMEOUT })
+  check('the caret in a link shows its card with the URL', (await page.locator('[data-overlay="nb-link-card"] .nb-link-url').textContent()) === 'https://example.com')
+  await page.locator('[data-overlay="nb-link-card"] [data-tool="link-edit"]').click()
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace')
+  await page.keyboard.type('org')
+  await page.keyboard.press('Enter')
+  await settle()
+  check('Edit in the card changes the whole link', await page.locator(`${ROOT} a[data-link="https://example.org"]`).allTextContents().then(texts => texts.join('')) === 'words' && await page.locator(`${ROOT} a[data-link="https://example.com"]`).count() === 0, await where())
+  await page.keyboard.press('End')
+  await page.keyboard.press('ArrowLeft')
+  await page.waitForSelector('[data-overlay="nb-link-card"]', { timeout: TIMEOUT })
+  await page.locator('[data-overlay="nb-link-card"] [data-tool="link-remove"]').click()
+  await settle()
+  check('Remove in the card unlinks the text and keeps it bold', await page.locator(`${ROOT} a[data-link]`).count() === 0 && (await page.locator(`${ROOT} .nb-b`).allTextContents()).join('') === 'words' && await page.locator('[data-overlay="nb-link-card"]').count() === 0, await where())
+
+  await page.keyboard.press('Escape')
+  await settle()
+  check('Esc selects the block', await page.locator(`${ROOT} .nb-selected`).count() === 1)
+  await page.keyboard.press('Control+d')
+  await settle()
+  check('Ctrl+D duplicates the selected block', (await kinds()).endsWith('Quote,Quote'), await kinds())
+  await page.keyboard.press('Backspace')
+  await settle()
+  check('Backspace deletes the selected block', (await kinds()) === 'Heading,Bulleted,Bulleted,Todo,Paragraph,Quote', await kinds())
+  await page.keyboard.press('Control+z')
+  await settle()
+  check('Ctrl+Z brings it back', (await kinds()).endsWith('Quote,Quote'), await kinds())
+  await page.keyboard.press('Control+Shift+z')
+  await settle()
+  check('Ctrl+Shift+Z deletes it again', (await kinds()) === 'Heading,Bulleted,Bulleted,Todo,Paragraph,Quote', await kinds())
+
+  await page.locator(`${ROOT} [data-text-of]`).last().click()
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Control+Alt+8')
+  await page.keyboard.type('let a = 1')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('b')
+  await settle()
+  check('Ctrl+Alt+8 makes a code block where Enter is a newline and Tab two spaces', JSON.stringify((await blocks()).at(-1)) === JSON.stringify({ kind: 'Code', text: 'let a = 1\n  b' }), JSON.stringify((await blocks()).at(-1)))
+  await page.keyboard.press('Shift+Tab')
+  await settle()
+  check('Shift+Tab takes the spaces away', (await blocks()).at(-1)?.text === 'let a = 1\nb', JSON.stringify((await blocks()).at(-1)))
+  await page.locator(`${ROOT} [data-action="code-language"]`).last().click()
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  await page.keyboard.type('pyt')
+  await page.keyboard.press('Enter')
+  await settle()
+  check('the language list sets the code language', (await page.locator(`${ROOT} [data-action="code-language"]`).last().textContent()) === 'python')
+  check('the code block has a Copy button', await page.locator(`${ROOT} [data-action="code-copy"]`).count() === 1)
+  await page.locator(`${ROOT} [data-text-of]`).last().click()
+  await page.keyboard.press('Control+Enter')
+  // Let the new block render before typing into it.
+  await settle()
+  await page.keyboard.type('/callout')
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  // The menu opens on "/"; wait for the typed query to filter it before Enter.
+  await page.waitForFunction(() => document.querySelector('[data-overlay="nb-slash-menu"] .nb-active')?.textContent?.includes('Callout'), null, { timeout: TIMEOUT })
+  await page.keyboard.press('Enter')
+  await settle()
+  check('Ctrl+Enter leaves the code block; "/callout" makes a callout', (await kinds()).endsWith('Code,Callout'), await kinds())
+  await page.locator(`${ROOT} [data-action="callout-icon"]`).last().click()
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  await page.keyboard.type('rock')
+  await page.keyboard.press('Enter')
+  await settle()
+  check('the callout icon picker changes the icon', (await page.locator(`${ROOT} [data-action="callout-icon"]`).last().textContent()) === String.fromCodePoint(0x1f680))
+
+  await page.hover(`${ROOT} [data-kind="Callout"]`)
+  await page.locator(`${ROOT} [data-kind="Callout"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.type('table')
+  await page.keyboard.press('Enter')
+  await settle()
+  const cells = () => page.locator(`${ROOT} [data-kind="Table"] [data-text-of]`).allTextContents()
+  await page.keyboard.type('Name')
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('Role')
+  await settle()
+  check('"/table" makes a table; typing fills a cell and Tab moves to the next', JSON.stringify((await cells()).slice(0, 3)) === JSON.stringify(['Name', 'Role', '']), JSON.stringify(await cells()))
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Tab')
+  await page.keyboard.type('x')
+  await settle()
+  check('Tab past the last cell adds a row', (await cells()).length === 9 && (await cells())[6] === 'x', JSON.stringify(await cells()))
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Backspace')
+  await settle()
+  check('Enter in the last row adds one below; Backspace at a cell start keeps the table', (await cells()).length === 12 && (await kinds()).includes('Callout,Table'), `${(await cells()).length} ${await kinds()}`)
+  await page.hover(`${ROOT} [data-kind="Table"]`)
+  await page.locator(`${ROOT} [data-action="table-add-column"]`).click()
+  await settle()
+  check('+ adds a column', (await cells()).length === 16, String((await cells()).length))
+
+  await page.route(`${base}/check-photo.svg`, route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#8ab"/></svg>' }))
+  await page.hover(`${ROOT} [data-kind="Table"]`)
+  await page.locator(`${ROOT} [data-kind="Table"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.type('image')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('[data-overlay="nb-prompt"]', { timeout: TIMEOUT })
+  await page.keyboard.type(`${base}/check-photo.svg`)
+  await page.keyboard.press('Enter')
+  await settle()
+  const frame = page.locator(`${ROOT} .nb-image-frame`)
+  check('"/image" and a link adds the image', await page.locator(`${ROOT} img.nb-image[src="${base}/check-photo.svg"]`).count() === 1, await where())
+  const wide = (await frame.boundingBox())?.width ?? 0
+  await frame.hover()
+  const edge = await page.locator(`${ROOT} .nb-image-handle-right`).boundingBox()
+  if (edge !== null) {
+    await page.mouse.move(edge.x + 3, edge.y + 24)
+    await page.mouse.down()
+    await page.mouse.move(edge.x - 97, edge.y + 24, { steps: 5 })
+    await page.mouse.up()
+  }
+  await settle()
+  const narrow = (await frame.boundingBox())?.width ?? 0
+  check('dragging an image edge resizes it from both sides', Math.abs(wide - 200 - narrow) <= 2 && (await frame.getAttribute('style'))?.includes(`${Math.round(narrow)}px`), `${wide} → ${narrow}`)
+
+  await page.hover(`${ROOT} [data-kind="Image"]`)
+  await page.locator(`${ROOT} [data-kind="Image"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.press('Backspace')
+  await page.keyboard.type('> Details')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('hidden')
+  await settle()
+  const inside = `${ROOT} [data-kind="Toggle"] [data-block-id]`
+  check('"> " makes a toggle and Enter writes inside it', (await page.locator(inside).allTextContents()).join('') === 'hidden', await kinds())
+  await page.locator(`${ROOT} [data-kind="Toggle"] [data-action="toggle-open"]`).click()
+  await settle()
+  check('the toggle arrow closes it', await page.locator(inside).count() === 0)
+  await page.locator(`${ROOT} [data-kind="Toggle"] [data-action="toggle-open"]`).click()
+  await settle()
+  check('and opens it again', await page.locator(inside).count() === 1)
+
+  await page.hover(`${ROOT} [data-kind="Toggle"] > .nb-row`)
+  await page.locator(`${ROOT} [data-kind="Toggle"] > .nb-gutter [data-action="add"]`).click()
+  await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  await page.keyboard.type('page')
+  await page.keyboard.press('Enter')
+  const subPage = await page.waitForFunction(() => document.querySelector('[data-editor-root] [data-kind="SubPage"] .nb-page-link-title')?.textContent === 'Untitled', null, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('"/page" creates a sub-page and links it', subPage, await kinds())
+
+  // Saved: the content survives a reload.
+  const before = await blocks()
+  await page.waitForTimeout(1200)
+  await page.goto(url)
+  await page.waitForSelector(ROOT, { timeout: TIMEOUT })
+  const after = await blocks()
+  check('the content is saved and survives a reload', JSON.stringify(after) === JSON.stringify(before), `${before.length} → ${after.length} blocks`)
+  // Backlinks: the page this check wrote mentions the wiki.
+  await page.goto(`${base}/p/demo-wiki`)
+  await page.waitForSelector('#backlinks-toggle', { timeout: TIMEOUT })
+  check('a mentioned page counts its backlinks', (await page.locator('#backlinks-toggle').textContent())?.includes('2 backlinks'), await page.locator('#backlinks-toggle').textContent())
+  await page.locator('#backlinks-toggle').click()
+  const listed = await page.waitForSelector(`[data-backlink="${url.split('/p/')[1]}"]`, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('and lists the pages that mention it', listed)
+
+  // Page history: the first version is the page as it was created; restoring it puts those blocks back.
+  await page.goto(url)
+  await page.waitForSelector(ROOT, { timeout: TIMEOUT })
+  const written = (await blocks()).length
+  await page.locator('#page-options').click()
+  await page.locator('#picker [role="listbox"]').getByText('Page history', { exact: true }).click()
+  const versionCount = await page.waitForFunction(() => document.querySelectorAll('#history-versions [data-version]').length >= 2 && document.activeElement?.id === 'history-panel', null, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('Page history lists the versions, newest first, and takes focus', versionCount, await page.evaluate(() => document.querySelectorAll('#history-versions [data-version]').length))
+  check('the editor stays mounted behind the history', (await blocks()).length === written, `${(await blocks()).length} of ${written} blocks`)
+  check('and previews the latest version', await page.waitForFunction(count => document.querySelectorAll('[data-version-preview] [data-block-id]').length === count, written, { timeout: TIMEOUT }).then(() => true, () => false))
+  await page.locator('#history-versions button').last().click()
+  const oldest = await page.waitForFunction(count => {
+    const shown = document.querySelectorAll('[data-version-preview] [data-block-id]').length
+    return document.querySelector('[data-version-preview]') !== null && shown < count ? { shown } : false
+  }, written, { timeout: TIMEOUT }).then(handle => handle.jsonValue().then(value => value.shown), () => null)
+  check('picking the first version previews it', oldest !== null, `${oldest} of ${written} blocks`)
+  await page.locator('#restore-version').click()
+  // A version without blocks comes back as one empty block to type in.
+  check('Restore version closes the history and puts its blocks back in the editor', await page.waitForFunction(count => document.querySelector('#history') === null && document.querySelectorAll('[data-editor-root] [data-block-id]').length === count, Math.max(1, oldest ?? 0), { timeout: TIMEOUT }).then(() => true, () => false), `${(await blocks()).length} blocks`)
+  await page.locator('#page-options').click()
+  await page.locator('#picker [role="listbox"]').getByText('Page history', { exact: true }).click()
+  await page.waitForSelector('#history-panel', { timeout: TIMEOUT })
+  await page.keyboard.press('Escape')
+  check('Esc closes the history', await page.waitForFunction(() => document.querySelector('#history') === null, null, { timeout: TIMEOUT }).then(() => true, () => false))
+
+  check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
+  await context.close()
+} finally {
+  await browser.close()
+}
+
+const failed = results.filter(result => !result.ok)
+console.log(`\n${results.length - failed.length}/${results.length} passed`)
+process.exit(failed.length === 0 ? 0 : 1)
