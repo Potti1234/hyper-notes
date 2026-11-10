@@ -138,6 +138,7 @@ const withHistory = (before: EditorState, after: EditorState, kind: 'typing' | '
  *  block's text and children join the first. */
 const deleteRange = (doc: Document, start: Point, end: Point): Document => {
   if (start.blockId === end.blockId) return B.update(doc, start.blockId, target => ({ ...target, text: T.remove(target.text, start.offset, end.offset) }))
+  if (B.isCell(start.blockId) || B.isCell(end.blockId)) return doc
   const blocks = B.textBlocks(doc)
   const from = blocks.findIndex(entry => entry.id === start.blockId)
   const to = blocks.findIndex(entry => entry.id === end.blockId)
@@ -174,7 +175,7 @@ export const targetIds = (state: EditorState): ReadonlyArray<string> => {
   const blocks = B.textBlocks(state.doc)
   const from = blocks.findIndex(entry => entry.id === start.blockId)
   const to = blocks.findIndex(entry => entry.id === end.blockId)
-  return from < 0 || to < 0 ? [] : blocks.slice(from, to + 1).map(entry => entry.id)
+  return from < 0 || to < 0 ? [] : [...new Set(blocks.slice(from, to + 1).map(entry => B.ownerId(entry.id)))]
 }
 
 const CONTINUES: ReadonlySet<KindTag> = new Set(['Bulleted', 'Numbered', 'Todo', 'Toggle'])
@@ -269,7 +270,8 @@ const insertText = (state: EditorState, value: string): EditorState => {
   let kind = target.kind
   let typingMarks: Marks | null = state.typingMarks
   let menu: Menu = state.menu
-  if (value === ' ' && target.kind._tag !== 'Code') {
+  const inCell = B.isCell(target.id)
+  if (value === ' ' && target.kind._tag !== 'Code' && !inCell) {
     const shortcut = blockShortcut({ ...target, text }, point.offset)
     if (shortcut !== null) {
       text = T.slice(text, offset)
@@ -278,10 +280,10 @@ const insertText = (state: EditorState, value: string): EditorState => {
     }
   }
   const plainBefore = T.caretText(text).slice(0, offset)
-  if (target.kind._tag === 'Paragraph' && plainBefore === '```' && offset === T.lengthOf(text)) {
+  if (!inCell && target.kind._tag === 'Paragraph' && plainBefore === '```' && offset === T.lengthOf(text)) {
     return withHistory(state, { ...state, doc: B.update(doc, target.id, entry => ({ ...entry, kind: { _tag: 'Code', language: 'plain text', isWrapped: false }, text: [] })), selection: caret(target.id, 0), typingMarks: null }, 'none')
   }
-  if (target.kind._tag === 'Paragraph' && plainBefore === '---' && offset === T.lengthOf(text)) {
+  if (!inCell && target.kind._tag === 'Paragraph' && plainBefore === '---' && offset === T.lengthOf(text)) {
     const id = ids(state)
     const next = B.paragraph(id.next())
     const replaced = B.insertAfter(B.update(doc, target.id, entry => ({ ...entry, kind: { _tag: 'Divider' }, text: [] })), target.id, [next])
@@ -292,7 +294,7 @@ const insertText = (state: EditorState, value: string): EditorState => {
     if (inline !== null) [text, offset, typingMarks] = inline
   }
   const previous = point.offset === 0 ? ' ' : (T.caretText(target.text)[point.offset - 1] ?? ' ')
-  const isOpening = menu._tag === 'NoMenu' && kind._tag !== 'Code' && !marks.code
+  const isOpening = menu._tag === 'NoMenu' && kind._tag !== 'Code' && !marks.code && !inCell
   if (isOpening && value === '/' && /\s/.test(previous)) menu = { _tag: 'SlashMenu', blockId: target.id, from: point.offset, query: '', active: 0 }
   else if (isOpening && value === '@' && /\s/.test(previous)) menu = { _tag: 'InlineMenu', trigger: '@', blockId: target.id, from: point.offset, query: '', active: 0 }
   else if (isOpening && /^[a-z0-9]$/i.test(value) && previous === ':' && /\s/.test(point.offset < 2 ? ' ' : (T.caretText(target.text)[point.offset - 2] ?? ' '))) {
@@ -349,6 +351,7 @@ const deleteBackward = (state: EditorState, unit: Unit): EditorState => {
     const menu = state.menu._tag === 'NoMenu' ? state.menu : menuAfter(state.menu, target.id, text, from)
     return withHistory(state, { ...state, doc: B.update(state.doc, target.id, entry => ({ ...entry, text })), selection: caret(target.id, from), menu, typingMarks: null }, 'deleting')
   }
+  if (B.isCell(target.id)) return state
   // At the start: a list item, heading or quote turns into text first, then nested text moves out, then it joins the block above.
   if (target.kind._tag !== 'Paragraph' && target.kind._tag !== 'Code') {
     return withHistory(state, { ...state, doc: B.update(state.doc, target.id, entry => ({ ...entry, kind: { _tag: 'Paragraph' } })) }, 'none')
@@ -379,12 +382,31 @@ const deleteForward = (state: EditorState, unit: Unit): EditorState => {
     const to = unit === 'line' ? plain.length : unit === 'word' ? T.wordEndAfter(plain, point.offset) : T.charAfter(plain, point.offset)
     return withHistory(state, { ...state, doc: B.update(state.doc, target.id, entry => ({ ...entry, text: T.remove(entry.text, point.offset, to) })), typingMarks: null }, 'deleting')
   }
+  if (B.isCell(target.id)) return state
   const next = B.nextVisible(state.doc, target.id)
   if (next === null) return state
   if (!hasText(next.kind)) return withHistory(state, { ...state, doc: B.remove(state.doc, next.id)[0] }, 'none')
   const [without] = B.remove(state.doc, next.id)
   const doc = B.update(without, target.id, entry => ({ ...entry, text: T.concat(entry.text, next.text), children: [...entry.children, ...next.children] }))
   return withHistory(state, { ...state, doc }, 'none')
+}
+
+/** Tab/Shift+Tab and Enter in a table: the next, previous or lower cell, with a new row past the last one. */
+const moveToCell = (state: EditorState, id: string, step: 'down' | 'next' | 'previous'): EditorState => {
+  const cell = B.parseCell(id)
+  const table = cell === null ? null : B.find(state.doc, cell.tableId)
+  if (cell === null || table === null || table.kind._tag !== 'Table') return state
+  const { rows } = table.kind
+  const width = rows[0]?.length ?? 0
+  let { row, column } = cell
+  if (step === 'down') row += 1
+  else if (step === 'next') [row, column] = column + 1 >= width ? [row + 1, 0] : [row, column + 1]
+  else [row, column] = column === 0 ? [row - 1, width - 1] : [row, column - 1]
+  if (row < 0) return state
+  const doc = row >= rows.length ? B.update(state.doc, table.id, entry => ({ ...entry, kind: B.addRow(table.kind as Extract<Kind, { _tag: 'Table' }>) })) : state.doc
+  const target = B.cellId(table.id, row, column)
+  const selection = caret(target, T.lengthOf(B.find(doc, target)?.text ?? []))
+  return doc === state.doc ? { ...state, selection, menu: { _tag: 'NoMenu' }, typingMarks: null, lastEdit: 'none' } : withHistory(state, { ...state, doc, selection, menu: { _tag: 'NoMenu' } }, 'none')
 }
 
 /** Tab in a code block types two spaces; Shift+Tab takes up to two from the start of the line. */
@@ -412,6 +434,7 @@ const enter = (state: EditorState): EditorState => {
   const target = B.find(doc, point.blockId)
   if (target === null) return state
   if (target.kind._tag === 'Code') return insertText({ ...state, doc, selection: caret(point.blockId, point.offset) }, '\n')
+  if (B.isCell(target.id)) return moveToCell({ ...state, doc }, target.id, 'down')
   const id = ids(state)
   const length = T.lengthOf(target.text)
   if (length === 0 && CONVERTS_ON_EMPTY.has(target.kind._tag) && target.children.length === 0) {
@@ -512,6 +535,7 @@ export const apply = (state: EditorState, action: Action): EditorState => {
     case 'Enter': return enter(state)
     case 'SoftBreak': return insertText(state, '\n')
     case 'Indent': {
+      if (state.selection._tag === 'TextSelection' && B.isCell(state.selection.focus.blockId)) return moveToCell(state, state.selection.focus.blockId, action.isOutdent ? 'previous' : 'next')
       const inCode = codeIndent(state, action.isOutdent)
       if (inCode !== null) return inCode
       const blockIds = targetIds(state)
@@ -636,7 +660,7 @@ export const apply = (state: EditorState, action: Action): EditorState => {
       if (T.lengthOf(text) === 0) {
         const doc = B.update(state.doc, blockId, entry => ({ ...entry, kind, text: hasText(kind) ? text : [], children: kind._tag === 'ColumnList' ? columns() : entry.children }))
         const after = hasText(kind) ? doc : B.insertAfter(doc, blockId, [B.paragraph(id.next())])
-        const caretId = hasText(kind) ? blockId : (B.nextVisible(after, blockId)?.id ?? blockId)
+        const caretId = kind._tag === 'Table' ? B.cellId(blockId, 0, 0) : hasText(kind) ? blockId : (B.nextVisible(after, blockId)?.id ?? blockId)
         return withHistory(state, { ...state, doc: after, menu: { _tag: 'NoMenu' }, selection: caret(caretId, 0), idCount: id.count() }, 'none')
       }
       const fresh = B.block(id.next(), kind, [], columns())

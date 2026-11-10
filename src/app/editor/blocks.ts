@@ -45,7 +45,43 @@ export const pathOf = (doc: Document, id: string): Path | null => {
   return null
 }
 
+// TABLE CELLS
+// A simple table's cells are edited like text blocks: each has an id
+// "<table id>~<row>~<column>", which find and update resolve into the table.
+
+export type CellAddress = Readonly<{ tableId: string; row: number; column: number }>
+
+export const cellId = (tableId: string, row: number, column: number): string => `${tableId}~${row}~${column}`
+
+export const parseCell = (id: string): CellAddress | null => {
+  const [tableId, row, column, ...rest] = id.split('~')
+  if (tableId === undefined || row === undefined || column === undefined || rest.length > 0 || !/^\d+$/.test(row) || !/^\d+$/.test(column)) return null
+  return { tableId, row: Number(row), column: Number(column) }
+}
+
+export const isCell = (id: string): boolean => parseCell(id) !== null
+
+/** The block that owns an id: the table for a cell, else the block itself. */
+export const ownerId = (id: string): string => parseCell(id)?.tableId ?? id
+
+export const cellBlock = (id: string, text: RichText): Block => ({ id, kind: { _tag: 'Paragraph' }, text, color: 'default', children: [] })
+
+const tableCells = (table: Block): ReadonlyArray<Block> =>
+  table.kind._tag === 'Table' ? table.kind.rows.flatMap((row, r) => row.map((cell, c) => cellBlock(cellId(table.id, r, c), cell))) : []
+
+type TableKind = Extract<Kind, { _tag: 'Table' }>
+
+export const addRow = (kind: TableKind): TableKind => ({ ...kind, rows: [...kind.rows, (kind.rows[0] ?? [[]]).map(() => [])] })
+
+export const addColumn = (kind: TableKind): TableKind => ({ ...kind, rows: kind.rows.map(row => [...row, []]) })
+
 export const find = (doc: Document, id: string): Block | null => {
+  const cell = parseCell(id)
+  if (cell !== null) {
+    const table = find(doc, cell.tableId)
+    const text = table?.kind._tag === 'Table' ? table.kind.rows[cell.row]?.[cell.column] : undefined
+    return text === undefined ? null : cellBlock(id, text)
+  }
   for (const child of doc) {
     if (child.id === id) return child
     const inner = find(child.children, id)
@@ -76,7 +112,8 @@ export const visible = (doc: Document, depth = 0): ReadonlyArray<Visible> =>
   doc.flatMap(child => [{ block: child, depth }, ...(showsChildren(child.kind) ? visible(child.children, depth + 1) : [])])
 
 /** Text blocks in reading order (caret movement goes through these). */
-export const textBlocks = (doc: Document): ReadonlyArray<Block> => visible(doc).map(entry => entry.block).filter(entry => hasText(entry.kind))
+export const textBlocks = (doc: Document): ReadonlyArray<Block> =>
+  visible(doc).flatMap(({ block }) => (block.kind._tag === 'Table' ? tableCells(block) : hasText(block.kind) ? [block] : []))
 
 export const previousText = (doc: Document, id: string): Block | null => {
   const list = textBlocks(doc)
@@ -108,6 +145,15 @@ export const allIds = (doc: Document): ReadonlyArray<string> => doc.flatMap(chil
 // CHANGING
 
 export const update = (doc: Document, id: string, change: (target: Block) => Block): Document => {
+  const cell = parseCell(id)
+  if (cell !== null) {
+    return update(doc, cell.tableId, table => {
+      const old = table.kind._tag === 'Table' ? table.kind.rows[cell.row]?.[cell.column] : undefined
+      if (table.kind._tag !== 'Table' || old === undefined) return table
+      const text = change(cellBlock(id, old)).text
+      return text === old ? table : { ...table, kind: { ...table.kind, rows: table.kind.rows.map((row, r) => (r === cell.row ? row.map((entry, c) => (c === cell.column ? text : entry)) : row)) } }
+    })
+  }
   let changed = false
   const next = doc.map(child => {
     if (changed) return child

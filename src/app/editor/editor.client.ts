@@ -424,6 +424,8 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
           }
           case 'media-url': return model.isEditable ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'url', blockId, value: 'url' in target.kind ? target.kind.url : '', active: 0 } } } : { model }
           case 'equation': return model.isEditable && target.kind._tag === 'Equation' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'tex', blockId, value: target.kind.tex, active: 0 } } } : { model }
+          case 'table-add-row':
+          case 'table-add-column': return model.isEditable && target.kind._tag === 'Table' ? act(model, { _tag: 'SetKind', blockId, kind: action === 'table-add-row' ? B.addRow(target.kind) : B.addColumn(target.kind) }) : { model }
           case 'callout-icon': return model.isEditable && target.kind._tag === 'Callout' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'icon', blockId, value: '', active: 0 } } } : { model }
           case 'code-copy': return target.kind._tag === 'Code' ? { model, commands: [CopyText({ text: T.plainText(target.text) })] } : { model }
           case 'code-language': return model.isEditable && target.kind._tag === 'Code' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'language', blockId, value: '', active: 0 } } } : { model }
@@ -848,9 +850,9 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
 
 const anchorOf = (model: Model): string | null => {
   const { overlay, editor } = model
-  if (overlay._tag === 'BlockMenu' || overlay._tag === 'Prompt') return overlay.blockId
-  if (editor.menu._tag !== 'NoMenu') return editor.menu.blockId
-  if (editor.selection._tag === 'TextSelection') return ordered(editor.doc, editor.selection)[0].blockId
+  if (overlay._tag === 'BlockMenu' || overlay._tag === 'Prompt') return B.ownerId(overlay.blockId)
+  if (editor.menu._tag !== 'NoMenu') return B.ownerId(editor.menu.blockId)
+  if (editor.selection._tag === 'TextSelection') return B.ownerId(ordered(editor.doc, editor.selection)[0].blockId)
   return null
 }
 

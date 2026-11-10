@@ -98,7 +98,7 @@ const PLACEHOLDERS: Readonly<Partial<Record<Block['kind']['_tag'], string>>> = {
 
 const placeholder = (target: Block, ctx: RenderContext): string => {
   if (target.kind._tag === 'Heading') return `Heading ${target.kind.level}`
-  if (target.kind._tag === 'Paragraph') return ctx.isEditable && ctx.focusedId === target.id ? "Write, press 'space' for AI, '/' for commands…".replace(", press 'space' for AI", '') : ''
+  if (target.kind._tag === 'Paragraph') return ctx.isEditable && ctx.focusedId === target.id && !B.isCell(target.id) ? "Write, press 'space' for AI, '/' for commands…".replace(", press 'space' for AI", '') : ''
   return PLACEHOLDERS[target.kind._tag] ?? ''
 }
 
@@ -179,11 +179,17 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
     case 'Equation': return [control(h, 'equation', target.id, 'nb-equation', [kind.tex === '' ? 'Add a TeX equation' : kind.tex])]
     case 'ColumnList': return []
     case 'Column': return []
-    case 'Table': return [h.table([h.Class('nb-table'), h.Attribute('contenteditable', 'false')], [h.tbody([], kind.rows.map((row, r) =>
-      h.tr([], row.map((cell, c) => {
-        const isHeader = (kind.hasHeaderRow && r === 0) || (kind.hasHeaderColumn && c === 0)
-        return (isHeader ? h.th : h.td)([h.Class('nb-cell')], cell.map(piece => inline(piece, ctx, h)))
-      }))))])]
+    case 'Table': return [
+      h.table([h.Class('nb-table')], [h.tbody([], kind.rows.map((row, r) =>
+        h.tr([], row.map((cell, c) => {
+          const isHeader = (kind.hasHeaderRow && r === 0) || (kind.hasHeaderColumn && c === 0)
+          return (isHeader ? h.th : h.td)([h.Class('nb-cell')], [text(B.cellBlock(B.cellId(target.id, r, c), cell), ctx, h)])
+        }))))]),
+      ...(ctx.isEditable ? [
+        control(h, 'table-add-column', target.id, 'nb-table-add-column', ['+'], 'Add a column'),
+        control(h, 'table-add-row', target.id, 'nb-table-add-row', ['+'], 'Add a row'),
+      ] : []),
+    ]
   }
 }
 

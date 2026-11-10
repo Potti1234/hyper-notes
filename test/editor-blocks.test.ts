@@ -1,6 +1,8 @@
 import { assert, describe, it } from '@effect/vitest'
+import { expect } from 'vitest'
 
 import * as B from '@/app/editor/blocks'
+import * as T from '@/app/editor/text'
 import type { Block, Document } from '@/app/editor/schema'
 
 const p = (id: string, children: ReadonlyArray<Block> = []): Block => ({ ...B.paragraph(id, id), children })
@@ -71,5 +73,30 @@ describe('block tree', () => {
     const n = (id: string) => B.block(id, { _tag: 'Numbered' })
     const list = [n('1'), n('2'), p('x'), n('3')]
     assert.deepStrictEqual([0, 1, 3].map(index => B.listNumber(list, index)), [1, 2, 1])
+  })
+})
+
+describe('table cells', () => {
+  const doc = [B.block('t', { _tag: 'Table', hasHeaderRow: false, hasHeaderColumn: false, rows: [[T.plain('a'), T.plain('b')]] }), B.paragraph('p', 'x')]
+
+  it('cell ids resolve to their text and write back into the table', () => {
+    expect(B.parseCell('t~0~1')).toEqual({ tableId: 't', row: 0, column: 1 })
+    expect(B.parseCell('t~x~1')).toBeNull()
+    expect(B.parseCell('plain')).toBeNull()
+    expect(B.ownerId('t~0~1')).toBe('t')
+    expect(T.caretText(B.find(doc, 't~0~1')!.text)).toBe('b')
+    expect(B.find(doc, 't~3~0')).toBeNull()
+    const next = B.update(doc, 't~0~1', entry => ({ ...entry, text: T.plain('c') }))
+    expect(next[0]!.kind).toMatchObject({ rows: [[T.plain('a'), T.plain('c')]] })
+  })
+
+  it('cells are text blocks in reading order', () => {
+    expect(B.textBlocks(doc).map(entry => entry.id)).toEqual(['t~0~0', 't~0~1', 'p'])
+  })
+
+  it('rows and columns are added empty', () => {
+    const kind = { _tag: 'Table', hasHeaderRow: false, hasHeaderColumn: false, rows: [[T.plain('a'), []]] } as const
+    expect(B.addRow(kind).rows).toEqual([[T.plain('a'), []], [[], []]])
+    expect(B.addColumn(kind).rows).toEqual([[T.plain('a'), [], []]])
   })
 })

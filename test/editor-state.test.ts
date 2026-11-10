@@ -265,3 +265,50 @@ describe('editor: code blocks', () => {
     assert.strictEqual(run(left, { _tag: 'Undo' }).doc.length, 1)
   })
 })
+
+describe('editor: simple tables', () => {
+  const table = () => ({ ...initial([B.block('t', { _tag: 'Table', hasHeaderRow: false, hasHeaderColumn: false, rows: [[T.plain('a'), []], [[], []]] })], 'n'), selection: caret('t~0~0', 1) })
+  const rows = (state: EditorState) => {
+    const kind = state.doc[0]!.kind
+    return kind._tag === 'Table' ? kind.rows.map(row => row.map(cell => caretText(cell))) : []
+  }
+
+  it('cells are typed into like text blocks', () => {
+    const typed = type(table(), 'b')
+    assert.deepStrictEqual(rows(typed), [['ab', ''], ['', '']])
+    assert.deepStrictEqual(rows(run(typed, { _tag: 'Undo' })), [['a', ''], ['', '']])
+  })
+
+  it('Tab goes to the next cell, wraps to the next row and adds a row past the last cell; Shift+Tab goes back', () => {
+    const tab = { _tag: 'Indent', isOutdent: false } as const
+    const next = run(table(), tab)
+    assert.deepStrictEqual(next.selection, caret('t~0~1', 0))
+    assert.deepStrictEqual(run(next, tab).selection, caret('t~1~0', 0))
+    const grown = run(next, tab, tab, tab)
+    assert.deepStrictEqual(rows(grown), [['a', ''], ['', ''], ['', '']])
+    assert.deepStrictEqual(grown.selection, caret('t~2~0', 0))
+    assert.deepStrictEqual(run(next, { _tag: 'Indent', isOutdent: true }).selection, caret('t~0~0', 1))
+    assert.deepStrictEqual(run(table(), { _tag: 'Indent', isOutdent: true }).selection, caret('t~0~0', 1))
+  })
+
+  it('Enter goes to the cell below, adding a row at the bottom', () => {
+    const down = run(table(), { _tag: 'Enter' })
+    assert.deepStrictEqual(down.selection, caret('t~1~0', 0))
+    assert.strictEqual(rows(run(down, { _tag: 'Enter' })).length, 3)
+  })
+
+  it('Backspace at the start of a cell and Delete at its end do nothing; no Markdown or menus in cells', () => {
+    const start = { ...table(), selection: caret('t~0~0', 0) }
+    assert.strictEqual(run(start, { _tag: 'DeleteBackward', unit: 'char' }), start)
+    const end = table()
+    assert.strictEqual(run(end, { _tag: 'DeleteForward', unit: 'char' }), end)
+    const empty = { ...table(), selection: caret('t~1~1', 0) }
+    assert.deepStrictEqual(rows(type(empty, '# x')), [['a', ''], ['', '# x']])
+    assert.strictEqual(type(empty, '/').menu._tag, 'NoMenu')
+    assert.strictEqual(type(empty, '@').menu._tag, 'NoMenu')
+  })
+
+  it('Esc selects the whole table', () => {
+    assert.deepStrictEqual(run(table(), { _tag: 'Escape' }).selection, { _tag: 'BlockSelection', ids: ['t'], anchorId: 't' })
+  })
+})
