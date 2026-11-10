@@ -70,6 +70,7 @@ const blockMarkdown = (block: Block, number: number, names: Names): string => {
     case 'Bookmark':
     case 'Embed': return `<${kind.url}>`
     case 'SubPage':
+    case 'InlineDatabase':
     case 'LinkToPage': return `[${names.page(kind.pageId)}](/p/${kind.pageId})`
     case 'TableOfContents':
     case 'Breadcrumb': return ''

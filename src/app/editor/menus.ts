@@ -32,6 +32,7 @@ export const SLASH_ITEMS: ReadonlyArray<SlashItem> = [
   item('link', 'Link to page', 'Link to an existing page.', 'Basic blocks', 'LinkToPage', ['link', 'page link']),
   item('callout', 'Callout', 'Make writing stand out.', 'Basic blocks', 'Callout', ['callout', 'note', 'info', 'warning']),
   item('table', 'Table', 'Add a simple table.', 'Basic blocks', 'Table', ['table', 'grid', 'simple table']),
+  item('database', 'Database - Inline', 'Add a database inside this page.', 'Basic blocks', 'InlineDatabase', ['database', 'inline', 'db']),
   item('image', 'Image', 'Embed with a link.', 'Media', 'Image', ['image', 'picture', 'photo', 'img']),
   item('bookmark', 'Web bookmark', 'Save a link as a visual bookmark.', 'Media', 'Bookmark', ['bookmark', 'link', 'url']),
   item('embed', 'Embed', 'For Figma, Loom, CodePen, maps and more.', 'Media', 'Embed', ['embed', 'iframe', 'video', 'figma', 'loom', 'youtube']),

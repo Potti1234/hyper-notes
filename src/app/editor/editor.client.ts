@@ -232,6 +232,12 @@ const chooseSlash = (model: Model, index: number): Update.Return<Model, Message>
       const result = commit(model, withPage)
       return { model: result.model, commands: [...(result.commands ?? []), Emit({ event: { _tag: 'CreatedSubPage', pageId: model.pageId, blockId: target.id, childId: `p${childId}` } })] }
     }
+    case 'InlineDatabase': {
+      const [childId, next] = freshId(editor)
+      const withDatabase = apply(next, { _tag: 'SetKind', blockId: target.id, kind: { _tag: 'InlineDatabase', pageId: `p${childId}` } })
+      const result = commit(model, withDatabase)
+      return { model: result.model, commands: [...(result.commands ?? []), Emit({ event: { _tag: 'CreatedInlineDatabase', pageId: model.pageId, blockId: target.id, childId: `p${childId}` } })] }
+    }
     case 'LinkToPage': return commit(model, editor, { _tag: 'Prompt', field: 'page', blockId: target.id, value: '', active: 0 })
     case 'Image':
     case 'Bookmark':

@@ -19,6 +19,7 @@ export const inputVariants = {
   inline: 'h-9 border-0 bg-transparent text-[13px] shadow-none focus-visible:ring-0 md:text-[13px] dark:bg-transparent',
   'inline-lg': 'h-12 border-0 bg-transparent text-[15px] shadow-none focus-visible:ring-0 md:text-[15px] dark:bg-transparent',
   title: 'h-auto border-0 bg-transparent px-0 py-1 text-[40px] leading-tight font-bold shadow-none placeholder:text-muted-foreground/50 focus-visible:ring-0 md:text-[40px] dark:bg-transparent',
+  inlineTitle: 'h-auto border-0 bg-transparent px-0 py-1 text-[20px] leading-tight font-bold shadow-none placeholder:text-muted-foreground/50 focus-visible:ring-0 md:text-[20px] dark:bg-transparent',
   description: 'h-auto border-0 bg-transparent px-0 py-1 text-[14px] shadow-none placeholder:text-muted-foreground/60 focus-visible:ring-0 md:text-[14px] dark:bg-transparent',
   compact: 'h-7 text-[13px] md:text-[13px]',
   dense: 'h-8 text-[13px] md:text-[13px]',

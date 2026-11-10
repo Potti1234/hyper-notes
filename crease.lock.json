@@ -1161,7 +1161,8 @@
             "td",
             "th",
             "nav",
-            "label"
+            "label",
+            "iframe"
           ]
         },
         {

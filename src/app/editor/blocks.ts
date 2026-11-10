@@ -23,6 +23,7 @@ export const kindOf = (tag: KindTag, level: 1 | 2 | 3 = 1): Kind => {
     case 'Embed': return { _tag: 'Embed', url: '' }
     case 'SubPage': return { _tag: 'SubPage', pageId: '' }
     case 'LinkToPage': return { _tag: 'LinkToPage', pageId: '' }
+    case 'InlineDatabase': return { _tag: 'InlineDatabase', pageId: '' }
     case 'Equation': return { _tag: 'Equation', tex: '' }
     case 'Column': return { _tag: 'Column', ratio: 1 }
     case 'Table': return { _tag: 'Table', hasHeaderRow: false, hasHeaderColumn: false, rows: [[[], [], []], [[], [], []]] }

@@ -40,6 +40,7 @@ import {
   setValue,
   addRow,
   addTemplate,
+  createInlineDatabase,
   addFromTemplate,
 } from './workspace'
 
@@ -100,6 +101,7 @@ export class Workspace extends Context.Service<
     readonly setValue: (rowId: string, propertyId: string, value: Value | null, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly addRow: (databaseId: string, input: Readonly<{ title: string; values: Page['values']; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly addTemplate: (databaseId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly createInlineDatabase: (input: Readonly<{ id: string; parentId: string; section: Page['section'] }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly addFromTemplate: (templateId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly movePage: (pageId: string, target: Readonly<{ parentId: string | null; section: Section; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly duplicatePage: (pageId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
@@ -153,6 +155,7 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
   setValue: (rowId, propertyId, value, actorId) => traced(backend, 'setValue', setValue(rowId, propertyId, value, actorId)),
   addRow: (databaseId, input, actorId) => traced(backend, 'addRow', addRow(databaseId, input, actorId)),
   addTemplate: (databaseId, actorId) => traced(backend, 'addTemplate', addTemplate(databaseId, actorId)),
+  createInlineDatabase: (input, actorId) => traced(backend, 'createInlineDatabase', createInlineDatabase(input, actorId)),
   addFromTemplate: (templateId, actorId) => traced(backend, 'addFromTemplate', addFromTemplate(templateId, actorId)),
   movePage: (pageId, target, actorId) => traced(backend, 'movePage', movePage(pageId, target, actorId)),
   duplicatePage: (pageId, actorId) => traced(backend, 'duplicatePage', duplicatePage(pageId, actorId)),

@@ -141,6 +141,7 @@
 @media (hover: hover) { .nb-image-frame:hover > .nb-image-handle { opacity: 0.5; } }
 .nb-media-empty, .nb-equation { flex: 1; padding: 12px; background: var(--muted); border-radius: 4px; color: var(--muted-foreground); cursor: pointer; }
 .nb-equation { text-align: center; font-family: var(--font-mono, ui-monospace, monospace); color: inherit; background: transparent; }
+.nb-inline-db-frame { display: block; width: 100%; height: 240px; border: 0; background: transparent; }
 .nb-bookmark { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px; text-decoration: none; color: inherit; }
 .nb-bookmark-url { font-size: 12px; color: var(--muted-foreground); }
 .nb-page-link { display: inline-flex; gap: 6px; align-items: center; padding: 3px 2px; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; font-weight: 500; color: inherit; }

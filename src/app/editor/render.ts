@@ -58,7 +58,7 @@ export const colorClass = (color: Color): string => COLOR_CLASS[color]
 const KIND_CLASS: Readonly<Record<Block['kind']['_tag'], string>> = {
   Paragraph: 'nb-paragraph', Heading: 'nb-heading', Bulleted: 'nb-bulleted', Numbered: 'nb-numbered', Todo: 'nb-todo', Toggle: 'nb-toggle',
   Quote: 'nb-quote', Callout: 'nb-callout', Code: 'nb-code', Divider: 'nb-divider-block', Image: 'nb-image-block', Bookmark: 'nb-bookmark-block',
-  Embed: 'nb-embed', SubPage: 'nb-subpage', LinkToPage: 'nb-linktopage', TableOfContents: 'nb-tableofcontents', Breadcrumb: 'nb-breadcrumb-block',
+  Embed: 'nb-embed', SubPage: 'nb-subpage', InlineDatabase: 'nb-inline-db', LinkToPage: 'nb-linktopage', TableOfContents: 'nb-tableofcontents', Breadcrumb: 'nb-breadcrumb-block',
   Equation: 'nb-equation-block', ColumnList: 'nb-columnlist', Column: 'nb-column', Table: 'nb-table-block',
 }
 const HEADING_CLASS = { 1: 'nb-h1', 2: 'nb-h2', 3: 'nb-h3' } as const
@@ -183,6 +183,10 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
         ])]
     case 'SubPage':
     case 'LinkToPage': return [pageLink(kind.pageId, ctx, h)]
+    // The database is its own live page, framed; public/inline-db.js sizes the frame to it.
+    case 'InlineDatabase': return [kind.pageId === ''
+      ? h.span([h.Class('nb-muted'), h.Attribute('contenteditable', 'false')], ['Creating database…'])
+      : h.iframe([h.Class('nb-inline-db-frame'), h.Src(`/p/${kind.pageId}?embed=1`), h.Title(ctx.pages.get(kind.pageId)?.title || 'Untitled database'), h.DataAttribute('inline-db', kind.pageId), h.Attribute('contenteditable', 'false')], [])]
     case 'TableOfContents': {
       const items = B.headings(doc)
       return [h.nav([h.Class('nb-toc'), h.Attribute('contenteditable', 'false')], items.length === 0

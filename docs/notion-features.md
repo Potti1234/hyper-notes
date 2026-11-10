@@ -51,8 +51,8 @@ Block types: Text, Heading 1/2/3, Toggle heading 1/2/3, Bulleted list, Numbered
 list, To-do, Toggle list, Quote, Callout, Divider, Code (language picker, copy,
 wrap), Page (sub-page), Link to page, Image (URL), Bookmark (URL card), Embed
 (URL), Table of contents, Breadcrumb, Equation (TeX block), Simple table,
-Columns (2–5), Button? (✗: needs automation), Synced block (✗), Database inline
-(⏳ after databases).
+Columns (2–5), Button? (✗: needs automation), Synced block (✗), Database - Inline (✅ `/database`: a table database as a
+sub-page, shown in the page in a frame with all of its views).
 
 Inline: bold, italic, underline, strikethrough, inline code, link, text colour
 (10) and background colour (10), inline equation, mentions (page, person, date),
@@ -118,6 +118,7 @@ emoji.
 | Feature | Interaction | Status |
 |---|---|---|
 | Database page | Title + description, view tabs, "New" button (with ▾ templates), Filter, Sort, Search 🔍, `•••` (properties, layout, group) | ✅ title, description, view tabs, New with ▾ templates (New template, Edit, Empty page), Filter, Sort, Search, view menu |
+| Inline database | `/database` adds a table inside the page; title, view tabs, toolbar and rows work in place; rows open as pages; the database is also a sub-page | ✅ framed at `/p/<id>?embed=1`; rows open as full pages rather than peeks |
 | Rows are pages | Open as side peek (default), centre peek or full page; peek shows properties above the page body | ✅ (page body is edited on the full page) |
 | Properties | Text, Number (format), Select, Multi-select (coloured options, create on type), Status (To do / In progress / Done groups), Date (range, time), Person, Checkbox, URL, Email, Phone, Created time, Created by, Last edited time, Last edited by, ID; Formula, Relation, Rollup, Files (✗ first version) | ✅ all listed; Files ✗ |
 | Table view | Column headers with type icon; click header → menu (rename, type, sort asc/desc, filter, hide, insert left/right, duplicate, delete); resize by dragging; cell editing in place; "+ New" row at the bottom; row hover handle with Open; calculations footer (count, …) | ✅ |

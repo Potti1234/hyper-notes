@@ -1,5 +1,5 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Layer } from 'effect'
+import { Effect, Layer } from 'effect'
 import { HttpRouter, HttpServerResponse, HttpStaticServer } from 'effect/http'
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
@@ -34,9 +34,16 @@ const page: Hyper.Options = {
   scripts: ['/keep-scroll.js'],
   principal: Auth.principal,
   // Covers and image blocks embed https images from anywhere, as in Notion.
-  contentSecurityPolicy: { directives: { 'img-src': ['https:'] } },
+  // Inline databases frame their own page (/p/<id>?embed=1).
+  contentSecurityPolicy: { directives: { 'img-src': ['https:'], 'frame-src': ["'self'"] } },
   snapshotSecret: Hyper.secretFromEnvironment('HYPER_SNAPSHOT_SECRET', 'dev-snapshot-secret, set HYPER_SNAPSHOT_SECRET'),
 }
+
+/** hyper-effect forbids all framing; inline databases frame the app's own pages, so allow the same origin (only). */
+const SameOriginFrames = HttpRouter.middleware(app => Effect.map(app, response => {
+  const policy = response.headers['content-security-policy']
+  return policy === undefined ? response : HttpServerResponse.setHeader(response, 'content-security-policy', policy.replace("frame-ancestors 'none'", "frame-ancestors 'self'"))
+}), { global: true })
 
 const Routes = Layer.mergeAll(
   // The page route loads the islands bundle (the editor) and accepts whole documents.
@@ -44,7 +51,7 @@ const Routes = Layer.mergeAll(
     ...page,
     path: '/p/:id',
     paths: ['/'],
-    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/copy-link.js', '/cover-reposition.js', '/export-page.js', '/sign-out.js', '/assets/islands.js'],
+    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/copy-link.js', '/cover-reposition.js', '/export-page.js', '/sign-out.js', '/inline-db.js', '/assets/islands.js'],
     prefetch: ['/p/*'],
     limits: { maxBodyBytes: 2 * 1024 * 1024 },
   }),
@@ -61,12 +68,13 @@ const Routes = Layer.mergeAll(
   HttpRouter.add('GET', '/cover-reposition.js', HttpServerResponse.file(publicFile('cover-reposition.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/export-page.js', HttpServerResponse.file(publicFile('export-page.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/sign-out.js', HttpServerResponse.file(publicFile('sign-out.js'), { contentType: 'text/javascript' })),
+  HttpRouter.add('GET', '/inline-db.js', HttpServerResponse.file(publicFile('inline-db.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/copy-link.js', HttpServerResponse.file(publicFile('copy-link.js'), { contentType: 'text/javascript' })),
   HttpStaticServer.layer({ root: publicFile('assets'), prefix: '/assets' }),
   HttpStaticServer.layer({ root: publicFile('fonts'), prefix: '/fonts' }),
 )
 
-HttpRouter.serve(Routes).pipe(
+HttpRouter.serve(Layer.mergeAll(Routes, SameOriginFrames)).pipe(
   Layer.provide([Viewers.layer, Hyper.sqlStore()]),
   Layer.provideMerge(Postgres.layer),
   Layer.provide(Postgres.clientLayer),

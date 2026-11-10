@@ -336,6 +336,13 @@ export const makeDatabase = (pageId: string, layout: Layout, actorId: string): O
     return [next, { ...data, pages: replacePages(data.pages, [next]) }] as const
   })
 
+/** A new table database inside a page, for an inline database block (`input.id` is the block's page). */
+export const createInlineDatabase = (input: Readonly<{ id: string; parentId: string; section: Section }>, actorId: string): Op<Page, InvalidChange> => (data, context) =>
+  Effect.gen(function* () {
+    const [page, next] = yield* createPage({ id: input.id, parentId: input.parentId, section: input.section }, actorId)(data, context)
+    return yield* makeDatabase(page.id, 'table', actorId)(next, context)
+  })
+
 /** A change to a database's properties or views; returns what it added. */
 export const changeDatabase = (pageId: string, change: DatabaseChange, actorId: string): Op<string | null, InvalidChange> => (data, { at, id }) =>
   Effect.gen(function* () {

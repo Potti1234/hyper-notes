@@ -39,6 +39,7 @@ export type EditorProps = typeof EditorProps.Type
 export const EditorEvent = S.Union([
   S.TaggedStruct('ChangedContent', { pageId: S.String, content: Document }),
   S.TaggedStruct('CreatedSubPage', { pageId: S.String, blockId: S.String, childId: S.String }),
+  S.TaggedStruct('CreatedInlineDatabase', { pageId: S.String, blockId: S.String, childId: S.String }),
   S.TaggedStruct('OpenedPage', { pageId: S.String }),
   /** Comment on the selected text (`quote` is that text, checked by the store). */
   S.TaggedStruct('StartedComment', { pageId: S.String, blockId: S.String, from: S.Number, to: S.Number, quote: S.String }),

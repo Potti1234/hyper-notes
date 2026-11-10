@@ -78,6 +78,8 @@ export const Embed = S.TaggedStruct('Embed', { url: S.String.pipe(S.check(S.isMa
 /** A page inside this one (the page's own row lives in the workspace). */
 export const SubPage = S.TaggedStruct('SubPage', { pageId: S.String })
 export const LinkToPage = S.TaggedStruct('LinkToPage', { pageId: S.String })
+/** A database page shown inside this one (its child page). */
+export const InlineDatabase = S.TaggedStruct('InlineDatabase', { pageId: S.String })
 export const TableOfContents = S.TaggedStruct('TableOfContents', {})
 export const Breadcrumb = S.TaggedStruct('Breadcrumb', {})
 export const Equation = S.TaggedStruct('Equation', { tex: S.String.pipe(S.check(S.isMaxLength(5000))) })
@@ -89,7 +91,7 @@ export const Table = S.TaggedStruct('Table', { hasHeaderRow: S.Boolean, hasHeade
 
 export const Kind = S.Union([
   Paragraph, Heading, Bulleted, Numbered, Todo, Toggle, Quote, Callout, Code, Divider, Image, Bookmark, Embed,
-  SubPage, LinkToPage, TableOfContents, Breadcrumb, Equation, ColumnList, Column, Table,
+  SubPage, LinkToPage, TableOfContents, Breadcrumb, Equation, ColumnList, Column, Table, InlineDatabase,
 ])
 export type Kind = typeof Kind.Type
 export type KindTag = Kind['_tag']
@@ -128,11 +130,11 @@ export type Document = ReadonlyArray<Block>
 export const hasText = (kind: Kind): boolean =>
   kind._tag !== 'Divider' && kind._tag !== 'Image' && kind._tag !== 'Bookmark' && kind._tag !== 'Embed' && kind._tag !== 'SubPage' &&
   kind._tag !== 'LinkToPage' && kind._tag !== 'TableOfContents' && kind._tag !== 'Breadcrumb' && kind._tag !== 'Equation' &&
-  kind._tag !== 'ColumnList' && kind._tag !== 'Column' && kind._tag !== 'Table'
+  kind._tag !== 'ColumnList' && kind._tag !== 'Column' && kind._tag !== 'Table' && kind._tag !== 'InlineDatabase'
 
 /** Kinds that show their children (nested under them, indented). */
 export const showsChildren = (kind: Kind): boolean =>
-  kind._tag === 'Toggle' ? kind.isOpen : kind._tag === 'Heading' ? !kind.isToggleable || kind.isOpen : kind._tag !== 'SubPage' && kind._tag !== 'Table'
+  kind._tag === 'Toggle' ? kind.isOpen : kind._tag === 'Heading' ? !kind.isToggleable || kind.isOpen : kind._tag !== 'SubPage' && kind._tag !== 'Table' && kind._tag !== 'InlineDatabase'
 
 /** List-like kinds keep their kind when Enter splits them. */
 export const isListLike = (kind: Kind): boolean => kind._tag === 'Bulleted' || kind._tag === 'Numbered' || kind._tag === 'Todo' || kind._tag === 'Toggle'

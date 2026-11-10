@@ -55,7 +55,8 @@ export type PageEntry = typeof PageEntry.Type
 export const TemplateEntry = S.Struct({ id: S.String, title: S.String })
 export type TemplateEntry = typeof TemplateEntry.Type
 
-export const View = S.Literals(['page', 'trash', 'inbox', 'empty'])
+/** 'embed': a database alone, framed inside another page as an inline database. */
+export const View = S.Literals(['page', 'trash', 'inbox', 'empty', 'embed'])
 export type View = typeof View.Type
 
 /** Focus to move after the next morph; a new `seq` asks again. */
@@ -496,6 +497,13 @@ export const CreateSubPage = Command.define('CreateSubPage', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ parentId, childId, section, actorId }) =>
     Workspace.use(workspace => workspace.createPage({ id: childId, parentId, section }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const CreateInlineDatabase = Command.define('CreateInlineDatabase', {
+  args: { parentId: S.String, childId: S.String, section: Section, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ parentId, childId, section, actorId }) =>
+    Workspace.use(workspace => workspace.createInlineDatabase({ id: childId, parentId, section }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const AddComment = Command.define('AddComment', {
@@ -1500,7 +1508,8 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
     case 'ClickedPeek': {
       const page = model.page
       const view = page?.database == null ? null : activeView(page.database, model.db)
-      if (view === null || D.openInOf(view) === 'full' || !model.rows.some(row => row.id === message.rowId)) return { model }
+      // A framed database opens rows as pages: the frame is too small for a peek.
+      if (view === null || model.view === 'embed' || D.openInOf(view) === 'full' || !model.rows.some(row => row.id === message.rowId)) return { model }
       return { model: focusOn(withDb({ ...model, picker: null }, { peek: message.rowId, editing: null, datePick: null }), '#peek-close') }
     }
     case 'ResizedColumn': {
@@ -1817,6 +1826,7 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
         switch (event._tag) {
           case 'ChangedContent': return { model, commands: [SaveContent({ pageId: page.id, content: event.content, actorId: model.me.id })] }
           case 'CreatedSubPage': return /^[A-Za-z0-9_-]{1,64}$/.test(event.childId) ? { model, commands: [CreateSubPage({ parentId: page.id, childId: event.childId, section: page.section, actorId: model.me.id })] } : { model }
+          case 'CreatedInlineDatabase': return /^[A-Za-z0-9_-]{1,64}$/.test(event.childId) ? { model, commands: [CreateInlineDatabase({ parentId: page.id, childId: event.childId, section: page.section, actorId: model.me.id })] } : { model }
           case 'OpenedPage': return { model }
           case 'StartedComment':
             return event.blockId.length > 64 || event.quote.trim() === '' || event.quote.length > MAX_QUOTE
@@ -2105,7 +2115,7 @@ const startView = (h: HtmlBuilder<Message>): Html =>
 const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
   const isEditable = !model.isInTrash && !page.isLocked
   const view = page.database === null ? null : activeView(page.database, model.db)
-  const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES, scope: '', isPeeking: view !== null && D.openInOf(view) !== 'full' }
+  const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES, scope: '', isPeeking: model.view !== 'embed' && view !== null && D.openInOf(view) !== 'full' }
   if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: D.withComputed(page.database, page.id, model.rows, model.related, model.people) }, h)]
   return [
     ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, computedRow(model, model.parentDatabase, rowEntryOf(page, titlesOf(model))), { ...context, isEditable: !model.isInTrash }, h)]),
@@ -2378,7 +2388,54 @@ const confirmDeleteView = (model: Model, pageId: string, h: HtmlBuilder<Message>
     ] }, h)
 }
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
+const pickerLayer = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
+  ...(model.picker === null ? [] : [pickerView({
+        picker: model.picker,
+        items: pickerItems(model),
+        itemIcon: item => {
+          if (item.value.startsWith('emoji:')) return pageIcon(item.value.slice(6), h)
+          const entry = model.pages.find(page => page.id === item.value || `page:${page.id}` === item.value)
+          return entry === undefined ? undefined : pageIcon(entry.icon, h)
+        },
+        onQuery: query => Message.ChangedPickerQuery({ query }),
+        onKey: key => Message.PressedPickerKey({ key }),
+        onChoose: value => Message.ChosePicker({ value }),
+        onClose: Message.ClosedPicker(),
+        ...(model.picker.field === 'search' ? { title: 'Search', filters: [{ id: 'search-titles-only', label: 'Only titles', isPressed: model.isSearchTitlesOnly, onToggle: Message.ToggledSearchTitlesOnly() }] } : {}),
+        ...(model.picker.field === 'options' ? { footer: optionsFooter(model) } : {}),
+      }, h)]),
+]
+
+const noticeLayer = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
+  ...(model.notice === null ? [] : [box({ class: 'fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-md bg-foreground px-3 py-2 text-[13px] text-background', attributes: [h.Id('notice'), h.Role('status')], children: [model.notice, button({ variant: 'ghost', size: 'icon-xs', ariaLabel: 'Dismiss', onClick: Message.ClickedDismissNotice(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h)] }, h)]),
+]
+
+/** An inline database's frame: the database page alone, its title above its views. */
+const embedView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  pageRoot({ isDark: model.me.isDark, theme: model.me.theme, class: 'h-auto overflow-visible bg-transparent', children: [
+      region(h, {
+        id: 'page-body',
+        deps: [model.page, model.titleDraft, model.descriptionDraft, model.db, model.rows, model.related, model.people, model.now, model.isInTrash, model.picker !== null],
+        render: () => {
+          const page = model.page
+          const isEditable = page !== null && !model.isInTrash && !page.isLocked
+          return box({ class: cn('flex w-full flex-col px-1 pb-2', model.picker !== null && 'min-h-[480px]'), attributes: [h.Id('page-body'), h.DataAttribute('embed-body', '')], children: page?.database == null
+            ? [box({ as: 'p', class: 'p-4 text-muted-foreground', attributes: [h.Id('empty')], children: ['This database does not exist or was deleted.'] }, h)]
+            : [
+                box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [
+                    input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled database', ariaLabel: 'Database title', autocomplete: 'off', variant: 'inlineTitle', isReadOnly: !isEditable, onInput: title => Message.ChangedTitle({ title }) }, h),
+                  ] }, h),
+                ...contentView(model, page, h),
+              ] }, h)
+        },
+      }),
+      ...pickerLayer(model, h),
+      ...noticeLayer(model, h),
+    ] }, h)
+
+export const view = (model: Model, h: HtmlBuilder<Message>): Document => model.view === 'embed'
+  ? { title: `${model.page === null ? 'Database' : titleOf(model.page)} · hypernotes`, body: embedView(model, h) }
+  : ({
   title: `${model.view === 'trash' ? 'Trash' : model.view === 'inbox' ? 'Inbox' : model.page === null ? 'hypernotes' : titleOf(model.page)} · hypernotes`,
   body: pageRoot({ isDark: model.me.isDark, theme: model.me.theme, children: [
       // Ctrl+K inside the editor makes a link (the editor takes it first), so search also has Ctrl+P.
@@ -2438,23 +2495,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         deps: [model.history, model.versions, model.pages, model.people, model.crumbs, model.now, model.page?.isLocked ?? null, model.isInTrash],
         render: () => historyView(model, model.history as History, h),
       })]),
-      ...(model.picker === null ? [] : [pickerView({
-        picker: model.picker,
-        items: pickerItems(model),
-        itemIcon: item => {
-          if (item.value.startsWith('emoji:')) return pageIcon(item.value.slice(6), h)
-          const entry = model.pages.find(page => page.id === item.value || `page:${page.id}` === item.value)
-          return entry === undefined ? undefined : pageIcon(entry.icon, h)
-        },
-        onQuery: query => Message.ChangedPickerQuery({ query }),
-        onKey: key => Message.PressedPickerKey({ key }),
-        onChoose: value => Message.ChosePicker({ value }),
-        onClose: Message.ClosedPicker(),
-        ...(model.picker.field === 'search' ? { title: 'Search', filters: [{ id: 'search-titles-only', label: 'Only titles', isPressed: model.isSearchTitlesOnly, onToggle: Message.ToggledSearchTitlesOnly() }] } : {}),
-        ...(model.picker.field === 'options' ? { footer: optionsFooter(model) } : {}),
-      }, h)]),
+      ...pickerLayer(model, h),
       ...(model.isSigningOut ? [box({ as: 'form', attributes: [h.Method('post'), h.Action('/logout'), h.Id('sign-out-form'), h.DataAttribute('sign-out', '')], children: [] }, h)] : []),
-      ...(model.notice === null ? [] : [box({ class: 'fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-md bg-foreground px-3 py-2 text-[13px] text-background', attributes: [h.Id('notice'), h.Role('status')], children: [model.notice, button({ variant: 'ghost', size: 'icon-xs', ariaLabel: 'Dismiss', onClick: Message.ClickedDismissNotice(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h)] }, h)]),
+      ...noticeLayer(model, h),
     ] }, h),
 })
 
@@ -2476,10 +2519,11 @@ export const program: Program<Model, Message, ClientMessage, Flags, Workspace | 
       const params = new URL(request.url, 'http://localhost').searchParams
       const isTrash = params.get('trash') === '1'
       const isInbox = !isTrash && params.get('inbox') === '1'
+      const isEmbed = !isTrash && !isInbox && params.get('embed') === '1' && request.params['id'] !== undefined
       const pageId = isTrash || isInbox ? null : (request.params['id'] ?? firstPage(state, me.id))
       const now = yield* Effect.clockWith(clock => clock.currentTimeMillis)
       const { me: _, ...slice } = sliceOf(state, pageId, me.id, now)
-      return { me, view: isTrash ? 'trash' : isInbox ? 'inbox' : pageId === null ? 'empty' : 'page', pageId, ...slice }
+      return { me, view: isTrash ? 'trash' : isInbox ? 'inbox' : isEmbed ? 'embed' : pageId === null ? 'empty' : 'page', pageId, ...slice }
     }),
   init,
   update,
