@@ -28,7 +28,7 @@ const people = []
 const DEMO_EMAILS = { Avery: 'afinch@hypernotes.example', Morgan: 'mvale@hypernotes.example' }
 
 const signIn = async (name, path = '/') => {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] })
   const page = await context.newPage()
   const errors = []
   page.on('pageerror', error => errors.push(`${name}: ${error}`))
@@ -168,6 +168,17 @@ try {
   await visit(avery.page, `/p/${copy}`)
   check('its breadcrumbs follow the move', await until(avery.page, () => [...document.querySelectorAll('#topbar [data-crumb]')].map(crumb => crumb.getAttribute('data-crumb'))[0] === 'demo-meetings'))
   await openMenu(avery.page, 'workspace', copy)
+  await choose(avery.page, 'Copy link')
+  check('Copy link puts the page address on the clipboard', await avery.page.waitForFunction(id => navigator.clipboard.readText().then(text => text === `${location.origin}/p/${id}`), copy, { timeout: TIMEOUT }).then(() => true, () => false))
+  check('and says so', await until(avery.page, () => document.body.textContent?.includes('Copied link to clipboard') === true))
+  await openMenu(avery.page, 'workspace', copy)
+  await choose(avery.page, 'Rename')
+  check('Rename opens with the title to edit', await until(avery.page, () => document.querySelector('#picker[data-field="rename"]') !== null && document.querySelector('#picker-input')?.value.includes('Release checklist v2') === true))
+  await avery.page.locator('#picker-input').fill('Release checklist v2 final')
+  await avery.page.keyboard.press('Enter')
+  check('Enter renames it in the sidebar', await until(avery.page, id => document.querySelector(`#sidebar [data-nav-row="${id}"]`)?.textContent?.includes('Release checklist v2 final') === true, copy))
+  check('and on the open page', await until(avery.page, () => document.querySelector('#page-title')?.value === 'Release checklist v2 final'))
+  await openMenu(avery.page, 'workspace', copy)
   await choose(avery.page, 'Move to Trash')
   check('Move to Trash takes it off the sidebar', await until(avery.page, id => document.querySelector(`#sidebar [data-nav-row="${id}"]`) === null, copy))
   check('the open page says it is in Trash', await until(avery.page, () => document.querySelector('#trash-banner') !== null && document.querySelector('[data-read-only]') !== null))
@@ -187,11 +198,11 @@ try {
   check('and shows "No matches" when nothing fits', await until(avery.page, () => document.querySelector('#trash-no-match') !== null && document.querySelector('[data-trash-row]') === null))
   await avery.page.locator('#trash-search').fill('')
   await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`) !== null, copy)
-  await avery.page.getByRole('button', { name: 'Delete Release checklist v2 from Trash' }).click()
+  await avery.page.getByRole('button', { name: 'Delete Release checklist v2 final from Trash' }).click()
   check('Delete from Trash asks first, focused on the delete button', await until(avery.page, () => document.activeElement?.id === 'confirm-delete'))
   await avery.page.keyboard.press('Escape')
   check('Esc keeps the page', await until(avery.page, id => document.querySelector('#confirm-delete-layer') === null && document.querySelector(`[data-trash-row="${id}"]`) !== null, copy))
-  await avery.page.getByRole('button', { name: 'Delete Release checklist v2 from Trash' }).click()
+  await avery.page.getByRole('button', { name: 'Delete Release checklist v2 final from Trash' }).click()
   await avery.page.locator('#confirm-delete').click()
   check('Delete from Trash removes it for good', await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`) === null, copy))
 

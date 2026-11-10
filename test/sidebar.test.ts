@@ -59,4 +59,25 @@ describe('sidebar', () => {
     assert.deepStrictEqual(commands(broken), [])
   })
 
+
+  it('Rename opens with the title and saves the trimmed new one', () => {
+    const menu = PagePage.update(model('demo-wiki'), PagePage.Message.ClickedMenu({ pageId: 'demo-onboarding', anchor: '--nav-demo-onboarding' }))
+    const renaming = PagePage.update(menu.model, PagePage.Message.ChosePicker({ value: 'rename' }))
+    assert.strictEqual(renaming.model.picker?.field, 'rename')
+    assert.strictEqual(renaming.model.picker?.query, menu.model.pages.find(entry => entry.id === 'demo-onboarding')?.title)
+    const typed = PagePage.update(renaming.model, PagePage.Message.ChangedPickerQuery({ query: '  Welcome  ' }))
+    const saved = PagePage.update(typed.model, PagePage.Message.ChosePicker({ value: 'rename' }))
+    assert.isNull(saved.model.picker)
+    assert.deepStrictEqual(argsOf(saved, 'SaveTitle'), { pageId: 'demo-onboarding', title: 'Welcome', actorId: 'avery' })
+    const blank = PagePage.update(PagePage.update(renaming.model, PagePage.Message.ChangedPickerQuery({ query: '   ' })).model, PagePage.Message.ChosePicker({ value: 'rename' }))
+    assert.deepStrictEqual(commands(blank), [])
+  })
+
+  it('Copy link closes the menu and tells you (the browser writes the address)', () => {
+    const menu = PagePage.update(model('demo-wiki'), PagePage.Message.ClickedMenu({ pageId: 'demo-onboarding', anchor: '--nav-demo-onboarding' }))
+    const copied = PagePage.update(menu.model, PagePage.Message.ChosePicker({ value: 'copylink' }))
+    assert.isNull(copied.model.picker)
+    assert.strictEqual(copied.model.notice, 'Copied link to clipboard')
+    assert.deepStrictEqual(commands(copied), [])
+  })
 })

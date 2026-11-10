@@ -641,7 +641,9 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
       const isFavorite = model.nav.favorites.some(row => row.id === picker.pageId)
       return [
         { value: 'favorite', label: isFavorite ? 'Remove from Favorites' : 'Add to Favorites' },
+        { value: 'copylink', label: 'Copy link' },
         { value: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl D' },
+        { value: 'rename', label: 'Rename' },
         { value: 'move', label: 'Move to', shortcut: 'Ctrl Shift P' },
         { value: 'trash', label: 'Move to Trash' },
         { value: 'open', label: 'Open' },
@@ -691,6 +693,10 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     case 'rollupProperty':
     case 'rollupFn':
       return rollupItems(model, picker.field, picker.pageId)
+    case 'rename': {
+      const title = picker.query.trim()
+      return title === '' ? [] : [{ value: 'rename', label: `Rename to “${title}”`, keywords: title, hint: 'Enter' }]
+    }
     case 'idPrefix': {
       const property = editableDatabase(model)?.database.properties.find(entry => entry.id === picker.pageId)
       if (property?.type._tag !== 'Id') return []
@@ -759,6 +765,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'lock', label: 'Lock page', group: 'Page', isChecked: page.isLocked },
         { value: 'history', label: 'Page history', group: 'Page' },
         { value: 'favorite', label: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', group: 'Page' },
+        { value: 'copylink', label: 'Copy link', group: 'Page' },
         { value: 'duplicate', label: 'Duplicate', group: 'Page', shortcut: 'Ctrl D' },
         { value: 'move', label: 'Move to', group: 'Page', shortcut: 'Ctrl Shift P' },
         { value: 'trash', label: 'Move to Trash', group: 'Page' },
@@ -797,7 +804,7 @@ const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn =
     default: {
       if (value === 'history') return openHistory(model)
       const font = FONTS.find(entry => `font:${entry}` === value)
-      if (page.isLocked && value !== 'lock') return value === 'favorite' || value === 'duplicate' || value === 'move' ? choose(model, { ...picker, field: 'page' }, value) : { model: closed }
+      if (page.isLocked && value !== 'lock') return value === 'favorite' || value === 'duplicate' || value === 'move' || value === 'copylink' ? choose(model, { ...picker, field: 'page' }, value) : { model: closed }
       if (font !== undefined) return change(model, page, { _tag: 'SetFont', font })
       switch (value) {
         case 'small': return change(model, page, { _tag: 'SetSmallText', isOn: !page.isSmallText })
@@ -827,9 +834,21 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
         case 'duplicate': return { model: closed, commands: [DuplicatePage({ pageId: picker.pageId, actorId })] }
         case 'move': return { model: withPicker(model, openPicker('move', picker.pageId, picker.anchor)) }
         case 'trash': return { model: closed, commands: [TrashPage({ pageId: picker.pageId, actorId })] }
+        // public/copy-link.js writes the address while the click is still a user gesture.
+        case 'copylink': return { model: { ...closed, notice: 'Copied link to clipboard' } }
+        case 'rename': {
+          const title = model.pages.find(entry => entry.id === picker.pageId)?.title ?? ''
+          return { model: withPicker(model, { ...openPicker('rename', picker.pageId, picker.anchor), query: title }) }
+        }
         case 'open': return { model: closed, commands: [LoadUrl({ url: `/p/${picker.pageId}` })] }
         default: return { model: closed }
       }
+    case 'rename': {
+      const title = picker.query.trim()
+      return value !== 'rename' || title === '' || !isKnown(model, picker.pageId)
+        ? { model: closed }
+        : { model: closed, commands: [SaveTitle({ pageId: picker.pageId, title, actorId })] }
+    }
     case 'icon':
     case 'cover':
     case 'options':

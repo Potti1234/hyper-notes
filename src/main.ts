@@ -41,7 +41,7 @@ const Routes = Layer.mergeAll(
     ...page,
     path: '/p/:id',
     paths: ['/'],
-    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/assets/islands.js'],
+    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/copy-link.js', '/assets/islands.js'],
     prefetch: ['/p/*'],
     limits: { maxBodyBytes: 2 * 1024 * 1024 },
   }),
@@ -54,6 +54,7 @@ const Routes = Layer.mergeAll(
   HttpRouter.add('GET', '/enter-submits.js', HttpServerResponse.file(publicFile('enter-submits.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/column-resize.js', HttpServerResponse.file(publicFile('column-resize.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/sidebar-resize.js', HttpServerResponse.file(publicFile('sidebar-resize.js'), { contentType: 'text/javascript' })),
+  HttpRouter.add('GET', '/copy-link.js', HttpServerResponse.file(publicFile('copy-link.js'), { contentType: 'text/javascript' })),
   HttpStaticServer.layer({ root: publicFile('assets'), prefix: '/assets' }),
   HttpStaticServer.layer({ root: publicFile('fonts'), prefix: '/fonts' }),
 )

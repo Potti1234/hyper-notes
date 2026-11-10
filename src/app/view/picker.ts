@@ -21,7 +21,7 @@ import { box, optionRow } from '@/app/view/design'
    crease's `command` is the visual source (classes, spacing). It is not used
    directly: on the server its Enter key does nothing (EXPERIMENT.md, F2). */
 
-export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options', 'property', 'propertyType', 'relation', 'rollupRelation', 'rollupProperty', 'rollupFn', 'calculate', 'idPrefix', 'addProperty', 'cell', 'cells', 'view', 'addView', 'addFilter', 'filter', 'sorts'])
+export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options', 'property', 'propertyType', 'relation', 'rollupRelation', 'rollupProperty', 'rollupFn', 'calculate', 'idPrefix', 'rename', 'addProperty', 'cell', 'cells', 'view', 'addView', 'addFilter', 'filter', 'sorts'])
 export type PickerField = typeof PickerField.Type
 
 export const Picker = S.Struct({
@@ -67,6 +67,7 @@ export const placeholder: Readonly<Record<PickerField, string>> = {
   rollupFn: 'Calculate…',
   calculate: 'Calculate…',
   idPrefix: 'Type a prefix, such as TASK…',
+  rename: 'Rename page…',
   addProperty: 'Search for a type…',
   cell: 'Search for an option…',
   cells: 'Search for an option…',
@@ -193,7 +194,7 @@ export const pickerView = <Msg>(props: PickerViewProps<Msg>, h: HtmlBuilder<Msg>
   const panel = box({ class: cn(
           'z-50 flex flex-col overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-[0_8px_30px_rgb(0_0_0/0.12)]',
           isCentered ? 'fixed top-[14vh] left-1/2 w-[min(640px,calc(100vw-32px))] -translate-x-1/2' : 'w-64',
-        ), attributes: [h.Id('picker'), h.Role('dialog'), h.AriaLabel(props.title ?? placeholder[picker.field]), h.DataAttribute('field', picker.field), ], // Below the trigger, flipping to stay on screen (src/lib/anchored.ts).
+        ), attributes: [h.Id('picker'), h.Role('dialog'), h.AriaLabel(props.title ?? placeholder[picker.field]), h.DataAttribute('field', picker.field), h.DataAttribute('picker-page', picker.pageId)], // Below the trigger, flipping to stay on screen (src/lib/anchored.ts).
         style: isCentered || picker.anchor === null ? undefined : anchoredStyle(picker.anchor), children: [
       ...(isCentered && props.title !== undefined
         ? [box({ class: 'px-4 pt-3 text-[11px] font-medium text-muted-foreground', children: [props.title] }, h)]
