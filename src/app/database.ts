@@ -67,7 +67,8 @@ export type Value = typeof Value.Type
 export const Values = S.Record(S.String, Value)
 export type Values = typeof Values.Type
 
-export const Layout = S.Literals(['table', 'board', 'list', 'gallery', 'calendar'])
+export const LAYOUTS = ['table', 'board', 'list', 'gallery', 'calendar'] as const
+export const Layout = S.Literals(LAYOUTS)
 export type Layout = typeof Layout.Type
 export const LAYOUT_LABEL: Readonly<Record<Layout, string>> = { table: 'Table', board: 'Board', list: 'List', gallery: 'Gallery', calendar: 'Calendar' }
 

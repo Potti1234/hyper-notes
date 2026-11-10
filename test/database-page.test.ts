@@ -1,6 +1,8 @@
 import { assert, describe, it } from '@effect/vitest'
 
 import type { Page } from '@/app/domain'
+import type * as D from '@/app/database'
+import { isDay, isMonth, monthDays, shiftMonth } from '@/app/page/database-view'
 import * as PagePage from '@/app/page/page'
 import { DEMO_MEMBERS, demoData } from '@/app/seed'
 
@@ -152,5 +154,80 @@ describe('page: databases', () => {
   it('the database search narrows rows by title', () => {
     const searched = send(model('demo-tasks'), PagePage.Message.ClickedDbSearch(), PagePage.Message.ChangedDbQuery({ query: 'slash' }))
     assert.strictEqual(searched.model.db.query, 'slash')
+  })
+
+  describe('board, list, gallery and calendar views', () => {
+    const tasks = (view: Partial<D.DatabaseView>, rows: Readonly<Record<string, D.Values>> = {}) => {
+      const data = demoData(NOW)
+      const pages = data.pages.map(page => page.id === 'demo-tasks' && page.database !== null
+        ? { ...page, database: { ...page.database, views: page.database.views.map(entry => ({ ...entry, ...view })) } }
+        : rows[page.id] === undefined ? page : { ...page, values: { ...page.values, ...rows[page.id] } })
+      const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
+      return PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
+    }
+
+    it('the view menu switches layout, grouping and the calendar date', () => {
+      const menu = (value: string) => argsOf(send(model('demo-tasks'), PagePage.Message.ClickedViewMenu({ viewId: 'demo-tasks-table' }), PagePage.Message.ChosePicker({ value })), 'ChangeDatabase')
+      assert.deepInclude(menu('layout:board'), { change: { _tag: 'SetLayout', viewId: 'demo-tasks-table', layout: 'board' } })
+      assert.deepInclude(menu('group:demo-status'), { change: { _tag: 'SetGroupBy', viewId: 'demo-tasks-table', propertyId: 'demo-status' } })
+      assert.deepInclude(menu('group:'), { change: { _tag: 'SetGroupBy', viewId: 'demo-tasks-table', propertyId: null } })
+      assert.isUndefined(menu('layout:timeline'))
+      const calendar = send(tasks({ layout: 'calendar' }), PagePage.Message.ClickedViewMenu({ viewId: 'demo-tasks-table' }), PagePage.Message.ChosePicker({ value: 'date:demo-due' }))
+      assert.deepInclude(argsOf(calendar, 'ChangeDatabase'), { change: { _tag: 'SetDateBy', viewId: 'demo-tasks-table', propertyId: 'demo-due' } })
+    })
+
+    it("+ New in a board column starts the row in that column's group", () => {
+      const board = tasks({ layout: 'board', groupBy: 'demo-status' })
+      assert.deepInclude(argsOf(send(board, PagePage.Message.ClickedNewInGroup({ key: 'demo-doing' })), 'AddRow'), { databaseId: 'demo-tasks', values: { 'demo-status': { _tag: 'OptionValue', optionId: 'demo-doing' } } })
+      assert.deepInclude(argsOf(send(board, PagePage.Message.ClickedNewInGroup({ key: '' })), 'AddRow'), { values: {} })
+      assert.deepStrictEqual(names(send(board, PagePage.Message.ClickedNewInGroup({ key: 'nope' }))), [])
+    })
+
+    it('dropping a card on another column sets its group value', () => {
+      const board = tasks({ layout: 'board', groupBy: 'demo-status' })
+      const dragging = send(board, PagePage.Message.StartedCardDrag({ rowId: 'demo-task-1' }), PagePage.Message.EnteredDropTarget({ key: 'demo-done' }))
+      assert.deepInclude(dragging.model.db, { dragging: 'demo-task-1', dropOn: 'demo-done' })
+      const dropped = send(dragging.model, PagePage.Message.DroppedCard({ key: 'demo-done' }))
+      assert.deepInclude(argsOf(dropped, 'SetValue'), { rowId: 'demo-task-1', propertyId: 'demo-status', value: { _tag: 'OptionValue', optionId: 'demo-done' } })
+      assert.deepInclude(dropped.model.db, { dragging: null, dropOn: null })
+      assert.deepStrictEqual(names(send(board, PagePage.Message.DroppedCard({ key: 'demo-done' }))), [], 'nothing is being dragged')
+      assert.deepStrictEqual(names(send(board, PagePage.Message.StartedCardDrag({ rowId: 'demo-wiki' }), PagePage.Message.DroppedCard({ key: 'demo-done' }))), [], 'only rows of this database')
+    })
+
+    it('a card moved to another person or tag leaves the old one', () => {
+      const people = send(tasks({ layout: 'board', groupBy: 'demo-assignee' }), PagePage.Message.StartedCardDrag({ rowId: 'demo-task-1' }), PagePage.Message.DroppedCard({ key: 'morgan' }))
+      assert.deepInclude(argsOf(people, 'SetValue'), { value: { _tag: 'PeopleValue', memberIds: ['morgan'] } })
+      const tags = send(tasks({ layout: 'board', groupBy: 'demo-tags' }, { 'demo-task-1': { 'demo-tags': { _tag: 'OptionsValue', optionIds: ['demo-tag-docs'] } } }), PagePage.Message.StartedCardDrag({ rowId: 'demo-task-1' }), PagePage.Message.DroppedCard({ key: 'demo-tag-editor' }))
+      assert.deepInclude(argsOf(tags, 'SetValue'), { value: { _tag: 'OptionsValue', optionIds: ['demo-tag-editor'] } })
+    })
+
+    it('a locked database takes no drags or new rows', () => {
+      const locked = tasks({ layout: 'board', groupBy: 'demo-status' })
+      const page = { ...locked, page: locked.page === null ? null : { ...locked.page, isLocked: true } }
+      assert.deepStrictEqual(names(send(page, PagePage.Message.StartedCardDrag({ rowId: 'demo-task-1' }), PagePage.Message.DroppedCard({ key: 'demo-done' }))), [])
+      assert.deepStrictEqual(names(send(page, PagePage.Message.ClickedNewInGroup({ key: 'demo-done' }))), [])
+    })
+
+    it('the calendar adds rows on a day and moves them by drag, keeping a range', () => {
+      const calendar = tasks({ layout: 'calendar', dateBy: 'demo-due' }, { 'demo-task-1': { 'demo-due': { _tag: 'DateValue', start: '2026-11-02', end: '2026-11-04' } } })
+      assert.deepInclude(argsOf(send(calendar, PagePage.Message.ClickedNewOnDay({ day: '2026-11-12' })), 'AddRow'), { values: { 'demo-due': { _tag: 'DateValue', start: '2026-11-12', end: null } } })
+      assert.deepStrictEqual(names(send(calendar, PagePage.Message.ClickedNewOnDay({ day: '2026-02-30' }))), [])
+      const moved = send(calendar, PagePage.Message.StartedCardDrag({ rowId: 'demo-task-1' }), PagePage.Message.DroppedCard({ key: '2026-11-30' }))
+      assert.deepInclude(argsOf(moved, 'SetValue'), { propertyId: 'demo-due', value: { _tag: 'DateValue', start: '2026-11-30', end: '2026-12-02' } })
+    })
+
+    it('the calendar month moves by valid months only', () => {
+      const calendar = tasks({ layout: 'calendar', dateBy: 'demo-due' })
+      assert.strictEqual(send(calendar, PagePage.Message.ChangedCalendarMonth({ month: '2026-12' })).model.db.month, '2026-12')
+      assert.isNull(send(calendar, PagePage.Message.ChangedCalendarMonth({ month: '2026-13' })).model.db.month)
+    })
+
+    it('month grids cover whole weeks from Sunday', () => {
+      const days = monthDays('2026-11')
+      assert.deepStrictEqual([days.length, days[0], days.at(-1)], [35, '2026-11-01', '2026-12-05'])
+      assert.deepStrictEqual([monthDays('2027-02')[0], monthDays('2027-02').length], ['2027-01-31', 35])
+      assert.deepStrictEqual([shiftMonth('2026-01', -1), shiftMonth('2026-12', 1)], ['2025-12', '2027-01'])
+      assert.deepStrictEqual([isDay('2026-02-28'), isDay('2026-02-30'), isMonth('2026-00')], [true, false, false])
+    })
   })
 })

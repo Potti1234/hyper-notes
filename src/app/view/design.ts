@@ -54,6 +54,22 @@ export const optionChip = <Msg>(
     ] }, h)
 
 /** Class names of the database grid (src/app/page/database-view.ts), styled in design.css. */
+export const DB_VIEW = {
+  board: 'nb-db-board',
+  column: 'nb-db-column',
+  card: 'nb-db-card',
+  preview: 'nb-db-preview',
+  dragged: 'nb-db-dragged',
+  line: 'nb-db-line',
+  gallery: 'nb-db-gallery',
+  calendar: 'nb-db-calendar',
+  day: 'nb-db-day',
+  outside: 'nb-db-outside',
+  dayAdd: 'nb-db-day-add',
+  today: 'nb-db-today',
+  event: 'nb-db-event',
+} as const
+
 export const DB_GRID = {
   scroll: 'nb-db-scroll',
   table: 'nb-db-table',

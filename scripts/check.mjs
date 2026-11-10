@@ -389,6 +389,53 @@ try {
   await avery.page.locator('#page-title').press('Enter')
   check("renaming the row's page renames the row", await until(morgan.page, () => document.querySelector('#database-table')?.textContent?.includes('Launch the site')))
 
+  // DATABASE VIEWS: board, list, gallery and calendar over the seeded Tasks database.
+  await visit(avery.page, '/p/demo-tasks')
+  await visit(morgan.page, '/p/demo-tasks')
+  const addView = async (page, label) => {
+    await page.locator('#add-view').click()
+    await until(page, () => document.querySelector('#picker[data-field="addView"]') !== null)
+    await choose(page, label)
+  }
+  // Each drag event waits for the server to take the previous one, as a person's slower drag would.
+  const drag = async (page, from, to) => {
+    const transfer = await page.evaluateHandle(() => new DataTransfer())
+    await page.locator(from).dispatchEvent('dragstart', { dataTransfer: transfer })
+    await until(page, selector => document.querySelector(selector)?.classList.contains('nb-db-dragged'), from)
+    await page.locator(to).dispatchEvent('dragenter', { dataTransfer: transfer })
+    await until(page, selector => document.querySelector(selector)?.getAttribute('data-drop-on') === 'true', to)
+    await page.locator(to).dispatchEvent('drop', { dataTransfer: transfer })
+    await until(page, () => document.querySelector('.nb-db-dragged') === null)
+    if (await page.locator(from).count() > 0) await page.locator(from).dispatchEvent('dragend', { dataTransfer: transfer })
+  }
+  await addView(avery.page, 'Board')
+  check('+ Board adds a board grouped by status', await until(avery.page, () => document.querySelector('#database-board')?.getAttribute('data-group-by') === 'demo-status' && document.querySelectorAll('#database-board [data-group]').length === 4))
+  check('board columns count their cards', await until(avery.page, () => document.querySelector('[data-count="demo-todo"]')?.textContent === '1' && document.querySelector('[data-count="demo-doing"]')?.textContent === '1'))
+  await drag(avery.page, '#database-board [data-row="demo-task-1"]', '#database-board [data-group="demo-done"]')
+  check('dragging a card to another column moves it there', await until(avery.page, () => document.querySelector('#database-board [data-group="demo-done"] [data-row="demo-task-1"]') !== null))
+  check('the moved card changes its status for everyone', await until(morgan.page, () => document.querySelector('#cell-demo-task-1-demo-status')?.textContent === 'Done'))
+  await avery.page.locator('#new-in-demo-doing').click()
+  check('+ New in a column adds a row to that column', await until(avery.page, () => [...document.querySelectorAll('#database-board [data-group="demo-doing"] [data-row]')].some(row => !row.getAttribute('data-row')?.startsWith('demo-'))))
+  await addView(avery.page, 'List')
+  check('+ List shows one line per row', await until(avery.page, () => document.querySelectorAll('#database-list [data-row]').length === 4))
+  check('list lines show their properties on the right', await until(avery.page, () => document.querySelector('#database-list [data-row="demo-task-1"] [data-value="demo-status"]')?.textContent === 'Done'))
+  await addView(avery.page, 'Gallery')
+  check('+ Gallery shows a card per row', await until(avery.page, () => document.querySelectorAll('#database-gallery [data-row]').length === 4))
+  await addView(avery.page, 'Calendar')
+  check('+ Calendar shows the month by the Due date', await until(avery.page, () => document.querySelector('#database-calendar')?.getAttribute('data-date-by') === 'demo-due' && document.querySelectorAll('#database-calendar [data-day]').length >= 35))
+  const month = await avery.page.evaluate(() => document.querySelector('#database-calendar')?.getAttribute('data-month'))
+  await avery.page.locator('#calendar-next').click()
+  check('the arrows page through months', await until(avery.page, start => document.querySelector('#database-calendar')?.getAttribute('data-month') !== start, month))
+  await avery.page.locator('#calendar-today').click()
+  check('Today goes back to this month', await until(avery.page, start => document.querySelector('#database-calendar')?.getAttribute('data-month') === start, month))
+  await avery.page.hover(`[data-day="${month}-15"]`)
+  await avery.page.locator(`#new-on-${month}-15`).click()
+  check('+ on a day adds a row due that day', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1, `${month}-15`))
+  await drag(avery.page, `[data-day="${month}-15"] [data-row]`, `[data-day="${month}-16"]`)
+  check('dragging a row to another day moves its date', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1 && document.querySelectorAll(`[data-day="${day.slice(0, 8)}15"] [data-row]`).length === 0, `${month}-16`))
+  await avery.page.locator('#view-demo-tasks-table').click()
+  check('the first tab goes back to the table', await until(avery.page, () => document.querySelectorAll('#database-table [data-row]').length === 5))
+
   // THEME
   await settle(avery.page)
   await avery.page.locator('#theme-toggle').click()

@@ -110,6 +110,8 @@ try {
       ['#header-title', 'the Name header menu'],
       ['#header-demo-tags', 'the Tags header menu'],
       ['#add-property', 'the + property menu'],
+      ['#add-view', 'the + view menu'],
+      ['#view-demo-tasks-table', 'the view menu'],
       ['#cell-demo-task-1-demo-status', 'a status cell menu'],
       ['#cell-demo-task-3-demo-tags', 'a multi-select cell menu, last row'],
       ['#cell-demo-task-1-demo-assignee', 'a person cell menu'],

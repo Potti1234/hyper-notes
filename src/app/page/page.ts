@@ -25,7 +25,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -205,6 +205,13 @@ export const Message = defineMessageUnion({
   ClickedNewRow: {},
   ClickedDbSearch: {},
   ChangedDbQuery: { query: S.String },
+  ClickedNewInGroup: { key: S.String },
+  ClickedNewOnDay: { day: S.String },
+  StartedCardDrag: { rowId: S.String },
+  EndedCardDrag: {},
+  EnteredDropTarget: { key: S.String },
+  DroppedCard: { key: S.String },
+  ChangedCalendarMonth: { month: S.String },
   SucceededDbChange: { addedId: S.NullOr(S.String), change: D.DatabaseChange },
   SucceededAddRow: { rowId: S.String },
   SucceededCreate: { id: S.String },
@@ -271,6 +278,13 @@ export const ClientMessage = S.Union([
   Message.ClosedDate,
   Message.ClickedNewRow,
   Message.ClickedDbSearch,
+  Message.ClickedNewInGroup,
+  Message.ClickedNewOnDay,
+  Message.StartedCardDrag,
+  Message.EndedCardDrag,
+  Message.EnteredDropTarget,
+  Message.DroppedCard,
+  Message.ChangedCalendarMonth,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -608,11 +622,18 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     case 'view':
       return [
         ...(picker.query.trim() === '' ? [] : [{ value: 'rename', label: `Rename to "${picker.query.trim()}"`, keywords: picker.query }]),
+        ...D.LAYOUTS.map(layout => ({ value: `layout:${layout}`, label: D.LAYOUT_LABEL[layout], group: 'Layout', isChecked: viewById(model, picker.pageId)?.layout === layout })),
+        ...(viewById(model, picker.pageId)?.layout === 'calendar'
+          ? (model.page?.database?.properties ?? []).filter(property => ['Date', 'CreatedTime', 'LastEditedTime'].includes(property.type._tag)).map(property => ({ value: `date:${property.id}`, label: property.name, group: 'Calendar by', isChecked: viewById(model, picker.pageId)?.dateBy === property.id }))
+          : [
+              { value: 'group:', label: 'None', group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === null },
+              ...(model.page?.database?.properties ?? []).filter(D.canGroupBy).map(property => ({ value: `group:${property.id}`, label: property.name, group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === property.id })),
+            ]),
         { value: 'duplicate', label: 'Duplicate view' },
         ...((model.page?.database?.views.length ?? 0) > 1 ? [{ value: 'delete', label: 'Delete view' }] : []),
       ]
     case 'addView':
-      return [{ value: 'layout:table', label: D.LAYOUT_LABEL.table, group: 'Layout' }]
+      return D.LAYOUTS.map(layout => ({ value: `layout:${layout}`, label: D.LAYOUT_LABEL[layout], group: 'Layout' }))
     case 'options': {
       const page = model.page
       if (page === null) return []
@@ -782,6 +803,44 @@ const openCell = (model: Model, rowId: string, propertyId: string): UpdateReturn
   }
 }
 
+const viewById = (model: Model, viewId: string): D.DatabaseView | null =>
+  model.page?.database?.views.find(view => view.id === viewId) ?? null
+
+/** Whether `key` names a group of `property` (an option, a person, checked or not, or none). */
+const isGroupKey = (property: D.Property, key: string, people: ReadonlyArray<D.Person>): boolean =>
+  key === D.NO_GROUP
+    ? property.type._tag !== 'Checkbox'
+    : property.type._tag === 'Checkbox' ? key === 'checked' || key === 'unchecked'
+      : property.type._tag === 'Person' ? people.some(member => member.id === key)
+        : D.optionsOf(property).some(option => option.id === key)
+
+/** A card dropped on a board column takes that group's value; one dropped on a
+ *  calendar day moves its date there, keeping the length of a range. */
+const dropCard = (model: Model, rowId: string | null, key: string): UpdateReturn => {
+  const page = editableDatabase(model)
+  const view = page === null ? null : activeView(page.database, model.db)
+  if (page === null || view === null || rowId === null) return { model }
+  if (view.layout === 'board') {
+    const cell = view.groupBy === null ? null : cellOf(model, rowId, view.groupBy)
+    if (cell === null || cell.property === null || !cell.isEditable || !isGroupKey(cell.property, key, model.people)) return { model }
+    const current = D.valueOf(cell.property, cell.row)
+    const next = cell.property.type._tag === 'MultiSelect' && current?._tag === 'OptionsValue' && key !== D.NO_GROUP
+      ? { _tag: 'OptionsValue' as const, optionIds: [...current.optionIds.filter(id => !D.groupRows(cell.property!, [cell.row], model.people).some(group => group.key === id && group.rows.length > 0)), key] }
+      : cell.property.type._tag === 'Person' && key !== D.NO_GROUP ? { _tag: 'PeopleValue' as const, memberIds: [key] } : D.valueForGroup(cell.property, key, current)
+    return setValue(model, cell, next)
+  }
+  if (view.layout === 'calendar') {
+    const cell = view.dateBy === null ? null : cellOf(model, rowId, view.dateBy)
+    if (cell === null || cell.property?.type._tag !== 'Date' || !cell.isEditable || !isDay(key)) return { model }
+    const current = D.valueOf(cell.property, cell.row)
+    const end = current?._tag === 'DateValue' && current.end !== null
+      ? new Date(Date.parse(`${key}T00:00:00Z`) + (Date.parse(`${current.end.slice(0, 10)}T00:00:00Z`) - Date.parse(`${current.start.slice(0, 10)}T00:00:00Z`))).toISOString().slice(0, 10)
+      : null
+    return setValue(model, cell, { _tag: 'DateValue', start: key, end })
+  }
+  return { model }
+}
+
 const todayOf = (model: Model): string => new Date(model.now).toISOString().slice(0, 10)
 
 /** Enter or leaving the input saves a typed cell; an unparsable number is refused. */
@@ -892,7 +951,13 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         case 'rename': return picker.query.trim() === '' ? { model } : changeDb(model, page, { _tag: 'RenameView', viewId: target.id, name: picker.query })
         case 'duplicate': return changeDb(model, page, { _tag: 'DuplicateView', viewId: target.id })
         case 'delete': return changeDb(model, page, { _tag: 'DeleteView', viewId: target.id })
-        default: return { model: closed }
+        default: {
+          const [kind, rest = ''] = [value.slice(0, value.indexOf(':')), value.slice(value.indexOf(':') + 1)]
+          if (kind === 'layout') return S.is(D.Layout)(rest) ? changeDb(model, page, { _tag: 'SetLayout', viewId: target.id, layout: rest }) : { model: closed }
+          if (kind === 'group') return changeDb(model, page, { _tag: 'SetGroupBy', viewId: target.id, propertyId: rest === '' ? null : rest })
+          if (kind === 'date') return changeDb(model, page, { _tag: 'SetDateBy', viewId: target.id, propertyId: rest })
+          return { model: closed }
+        }
       }
     }
     case 'addView': {
@@ -970,6 +1035,31 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       const view = page === null ? null : activeView(page.database, model.db)
       return page === null || view === null ? { model } : { model, commands: [AddRow({ databaseId: page.id, values: D.valuesForNew(page.database, view), actorId })] }
     }
+    case 'ClickedNewInGroup': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      const property = page === null || view?.groupBy == null ? null : D.propertyOf(page.database, view.groupBy)
+      if (page === null || view === null || property === null || !isGroupKey(property, message.key, model.people)) return { model }
+      const value = D.valueForGroup(property, message.key, null)
+      return { model, commands: [AddRow({ databaseId: page.id, values: { ...D.valuesForNew(page.database, view), ...(value === null ? {} : { [property.id]: value }) }, actorId })] }
+    }
+    case 'ClickedNewOnDay': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      const property = page === null || view?.dateBy == null ? null : D.propertyOf(page.database, view.dateBy)
+      if (page === null || view === null || property?.type._tag !== 'Date' || !isDay(message.day)) return { model }
+      return { model, commands: [AddRow({ databaseId: page.id, values: { ...D.valuesForNew(page.database, view), [property.id]: { _tag: 'DateValue', start: message.day, end: null } }, actorId })] }
+    }
+    case 'StartedCardDrag':
+      return editableDatabase(model) !== null && model.rows.some(row => row.id === message.rowId && !row.isLocked) ? { model: withDb(model, { dragging: message.rowId, dropOn: null }) } : { model }
+    case 'EndedCardDrag':
+      return { model: withDb(model, { dragging: null, dropOn: null }) }
+    case 'EnteredDropTarget':
+      return model.db.dragging === null || message.key.length > 64 ? { model } : { model: withDb(model, { dropOn: message.key }) }
+    case 'DroppedCard':
+      return dropCard(withDb(model, { dragging: null, dropOn: null }), model.db.dragging, message.key)
+    case 'ChangedCalendarMonth':
+      return isMonth(message.month) ? { model: withDb(model, { month: message.month }) } : { model }
     case 'SucceededAddRow': {
       const editing = withDb(model, { editing: { rowId: message.rowId, propertyId: D.TITLE, draft: '' } })
       return { model: model.rows.some(row => row.id === message.rowId) ? focusOn(editing, `#${CELL_INPUT_ID}`) : editing }
@@ -1087,6 +1177,7 @@ const DATABASE_TAGS = [
   'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName',
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
+  'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
 ] as const
 type PageMessage = Exclude<Message, { _tag: (typeof DATABASE_TAGS)[number] }>
 const isPageMessage = (message: Message): message is PageMessage => !(DATABASE_TAGS as ReadonlyArray<string>).includes(message._tag)
@@ -1303,6 +1394,13 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   newRow: Message.ClickedNewRow(),
   search: Message.ClickedDbSearch(),
   query: query => Message.ChangedDbQuery({ query }),
+  newInGroup: key => Message.ClickedNewInGroup({ key }),
+  newOnDay: day => Message.ClickedNewOnDay({ day }),
+  dragCard: rowId => Message.StartedCardDrag({ rowId }),
+  endDrag: Message.EndedCardDrag(),
+  enterDrop: key => Message.EnteredDropTarget({ key }),
+  drop: key => Message.DroppedCard({ key }),
+  month: month => Message.ChangedCalendarMonth({ month }),
 }
 
 const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.text.length === 0 && entry.kind._tag === 'Paragraph')
