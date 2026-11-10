@@ -2264,6 +2264,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             onMenu: (pageId, anchor) => Message.ClickedMenu({ pageId, anchor }),
             onSearch: Message.ClickedSearch(),
             onCollapse: Message.ToggledSidebar({ isCollapsed: true }),
+            onExpand: Message.ToggledSidebar({ isCollapsed: false }),
             onResize: width => Message.ResizedSidebar({ width }),
             onDragStart: pageId => Message.StartedNavDrag({ pageId }),
             onDragEnter: drop => Message.EnteredNavDrop({ drop }),

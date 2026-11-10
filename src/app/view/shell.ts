@@ -9,7 +9,7 @@ import { kbd } from '@/ui/kbd'
 import { type Member, type Page, type Section, firstName, sidebarWidth, titleOf } from '../domain'
 import type { WorkspaceState } from '../store'
 import { canSee, childrenOf, isTrashed } from '../workspace'
-import { box } from './design'
+import { SIDEBAR_PEEK, box } from './design'
 import { avatar, pageIcon } from './icons'
 
 /* The app shell: Notion's left sidebar (Favorites, Workspace and Private
@@ -97,6 +97,8 @@ export type SidebarActions<Msg> = Readonly<{
   onSearch: Msg
   /** « or Ctrl+\\ closes the sidebar; the top bar opens it again. */
   onCollapse: Msg
+  /** » in the hover peek of a closed sidebar keeps it open. */
+  onExpand: Msg
   /** The width public/sidebar-resize.js measured when the edge was let go. */
   onResize: (width: number) => Msg
   /** Dragging a row: above another row reorders, onto one nests, below a section's last row moves it there. */
@@ -189,10 +191,13 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
   const { actions } = props
   const emptyHint = (text: string) => box({ as: 'p', class: 'px-3 py-1 text-[13px] text-muted-foreground', children: [text] }, h)
   const isCollapsed = actions !== undefined && props.me.isSidebarCollapsed === true
-  return box({ as: 'aside', class: cn('relative h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[inset_-1px_0_0_var(--border)]', isCollapsed ? 'hidden' : 'flex'), style: { width: `${sidebarWidth(props.me.sidebarWidth)}px` }, attributes: [h.Id('sidebar'), h.AriaLabel('Sidebar'), ...(actions === undefined ? [] : [onResize(actions.onResize)])], children: [
+  return box({ as: 'aside', class: cn('flex flex-col bg-sidebar text-sidebar-foreground', isCollapsed ? SIDEBAR_PEEK.panel : 'relative h-screen shrink-0 shadow-[inset_-1px_0_0_var(--border)]'), style: { width: `${sidebarWidth(props.me.sidebarWidth)}px` }, attributes: [h.Id('sidebar'), ...(isCollapsed ? [h.DataAttribute('peek', '')] : []), h.AriaLabel('Sidebar'), ...(actions === undefined ? [] : [onResize(actions.onResize)])], children: [
       ...(actions === undefined
         ? []
-        : [box({ class: 'absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-ring/40', attributes: [h.DataAttribute('resize-sidebar', ''), h.Id('sidebar-resize'), h.Title('Drag to resize')], children: [] }, h)]),
+        : isCollapsed
+          // Closed, it waits off screen and slides in while the left edge or » is hovered (design.css).
+          ? [box({ class: SIDEBAR_PEEK.zone, attributes: [h.DataAttribute('sidebar-peek-zone', '')], children: [] }, h)]
+          : [box({ class: 'absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-ring/40', attributes: [h.DataAttribute('resize-sidebar', ''), h.Id('sidebar-resize'), h.Title('Drag to resize')], children: [] }, h)]),
       box({ class: 'flex items-center gap-1 px-2 pt-2 pb-1', children: [
           box({ class: 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1', children: [
               box({ as: 'span', class: 'flex size-[22px] shrink-0 items-center justify-center rounded-md bg-foreground text-[12px] font-semibold text-background', children: ['N'] }, h),
@@ -200,7 +205,9 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
             ] }, h),
           ...(actions === undefined
             ? []
-            : [button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-collapse', ariaLabel: 'Close sidebar', title: 'Close sidebar  Ctrl \\', onClick: actions.onCollapse, children: [Icon.icon('chevrons-left', { class: 'size-4' }, h)] }, h),
+            : [isCollapsed
+                ? button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-keep-open', ariaLabel: 'Keep sidebar open', title: 'Keep sidebar open  Ctrl \\', onClick: actions.onExpand, children: [Icon.icon('chevrons-right', { class: 'size-4' }, h)] }, h)
+                : button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-collapse', ariaLabel: 'Close sidebar', title: 'Close sidebar  Ctrl \\', onClick: actions.onCollapse, children: [Icon.icon('chevrons-left', { class: 'size-4' }, h)] }, h),
               button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-new-page', ariaLabel: 'New page', title: 'Create a new page', onClick: actions.onAdd(null, 'private'), children: [Icon.icon('square-pen', { class: 'size-4' }, h)] }, h)]),
         ] }, h),
       box({ class: 'flex flex-col px-2', children: [

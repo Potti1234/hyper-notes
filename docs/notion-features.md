@@ -11,7 +11,7 @@ deliberately left out (✗, with the reason). The status column is kept current.
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ✅ resize (saved per person) and collapse; hover peek ⏳ |
+| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ✅ resize (saved per person), collapse, and hover peek (left edge, the panel itself or `»`; "Keep open" in the peek reopens it) |
 | Workspace switcher | Top row: workspace icon + name + chevron; menu shows the account email, settings, log out | ⏳ |
 | Top shortcuts | Search (`Ctrl+K`/`Ctrl+P`), Home, Inbox, Settings | ✅ Search, Home, Settings; Inbox ⏳ |
 | New page | Pencil/compose button in the sidebar header and `Ctrl+N`: creates an untitled private page and opens it | ✅ button and `Ctrl+Alt+N` (browsers keep `Ctrl+N` for a new window) |

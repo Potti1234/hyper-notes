@@ -87,6 +87,12 @@ export const DB_GRID = {
   calcHint: 'nb-db-calc-hint',
 } as const
 
+/** Class names of the hover peek of a closed sidebar (src/app/view/shell.ts), styled in design.css. */
+export const SIDEBAR_PEEK = {
+  panel: 'sidebar-peek',
+  zone: 'sidebar-peek-zone',
+} as const
+
 /** A listbox option of the pickers and menus: a roving-focus row whose
  *  active state the page moves before the server answers (data-active). */
 export const optionRow = <Msg>(
