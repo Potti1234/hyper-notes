@@ -27,7 +27,7 @@ import { Viewers, Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverPosition, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, TEMPLATES_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, NavDrag, NavDrop, WORKSPACE_ANCHOR, navOf, sameNav, sidebar, workspaceName } from '../view/shell'
 import { SearchHit, docText, searchPages, wordCount } from '../search'
@@ -51,6 +51,9 @@ export type TrashEntry = typeof TrashEntry.Type
 /** A page someone can see, for search and "Move to". */
 export const PageEntry = S.Struct({ id: S.String, title: S.String, icon: S.String, path: S.String, section: Section })
 export type PageEntry = typeof PageEntry.Type
+
+export const TemplateEntry = S.Struct({ id: S.String, title: S.String })
+export type TemplateEntry = typeof TemplateEntry.Type
 
 export const View = S.Literals(['page', 'trash', 'inbox', 'empty'])
 export type View = typeof View.Type
@@ -124,6 +127,8 @@ export const Model = S.Struct({
   people: S.Array(MemberRef),
   trash: S.Array(TrashEntry),
   inbox: S.Array(InboxEntry),
+  /** The open database's templates for new rows. */
+  templates: S.Array(TemplateEntry),
   /** Member.inboxSeenAt when the page loaded: what the Inbox marks unread. */
   inboxSeenBefore: S.Number,
   now: S.Number,
@@ -227,6 +232,7 @@ export const Message = defineMessageUnion({
     people: S.Array(MemberRef),
     trash: S.Array(TrashEntry),
     inbox: S.Array(InboxEntry),
+    templates: S.Array(TemplateEntry),
     rows: S.Array(RowEntry),
     parentDatabase: S.NullOr(ParentDatabase),
     related: S.Array(RelatedDatabase),
@@ -256,6 +262,7 @@ export const Message = defineMessageUnion({
   ClearedDate: {},
   ClosedDate: {},
   ClickedNewRow: {},
+  ClickedTemplates: {},
   ClickedDbSearch: {},
   ChangedDbQuery: { query: S.String },
   ClickedNewInGroup: { key: S.String },
@@ -356,6 +363,7 @@ export const ClientMessage = S.Union([
   Message.ClearedDate,
   Message.ClosedDate,
   Message.ClickedNewRow,
+  Message.ClickedTemplates,
   Message.ClickedDbSearch,
   Message.ClickedNewInGroup,
   Message.ClickedNewOnDay,
@@ -444,6 +452,26 @@ export const CreateOption = Command.define('CreateOption', {
       Effect.flatMap(workspace.changeDatabase(databaseId, { _tag: 'AddOption', propertyId, name }, actorId), optionId =>
         optionId === null ? Effect.void : workspace.setValue(rowId, propertyId, keep === null ? { _tag: 'OptionValue', optionId } : { _tag: 'OptionsValue', optionIds: [...keep, optionId] }, actorId)),
     ).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const AddTemplate = Command.define('AddTemplate', {
+  args: { databaseId: S.String, actorId: S.String },
+  messages: [Message.SucceededCreate, Message.FailedChange],
+  execute: ({ databaseId, actorId }) =>
+    Workspace.use(workspace => workspace.addTemplate(databaseId, actorId)).pipe(
+      Effect.map(page => Message.SucceededCreate({ id: page.id })),
+      Effect.catchTag('InvalidChange', ({ reason }) => failed(reason)),
+    ),
+})
+
+export const AddFromTemplate = Command.define('AddFromTemplate', {
+  args: { templateId: S.String, actorId: S.String },
+  messages: [Message.SucceededCreate, Message.FailedChange],
+  execute: ({ templateId, actorId }) =>
+    Workspace.use(workspace => workspace.addFromTemplate(templateId, actorId)).pipe(
+      Effect.map(page => Message.SucceededCreate({ id: page.id })),
+      Effect.catchTag('InvalidChange', ({ reason }) => failed(reason)),
+    ),
 })
 
 export const AddRow = Command.define('AddRow', {
@@ -638,7 +666,7 @@ const relatedOf = (state: WorkspaceState, visible: ReadonlyArray<Page>, source: 
       id,
       title: titleOf(target),
       database: target.database,
-      rows: visible.filter(entry => entry.parentId === id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => ({
+      rows: visible.filter(entry => entry.parentId === id && entry.trashedAt === null && entry.isTemplate !== true).sort((a, b) => a.position - b.position).map(entry => ({
         id: entry.id, title: entry.title, icon: entry.icon, values: entry.values,
         createdAt: entry.createdAt, createdBy: entry.createdBy, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy,
       })),
@@ -664,7 +692,8 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     nav: navOf(state, memberId),
     pages: visible.filter(entry => !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, path: pathOf(state, entry), section: entry.section })),
     people: state.members.map(member => ({ id: member.id, name: member.name })),
-    rows: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => rowEntryOf(entry, titles)),
+    templates: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null && entry.isTemplate === true).sort((a, b) => a.position - b.position).map(entry => ({ id: entry.id, title: titleOf(entry) })),
+    rows: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null && entry.isTemplate !== true).sort((a, b) => a.position - b.position).map(entry => rowEntryOf(entry, titles)),
     parentDatabase,
     related: relatedOf(state, visible, page?.database == null ? parentDatabase : { id: page.id, database: page.database }),
     databases: visible.filter(entry => entry.database !== null && !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
@@ -676,7 +705,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase, a.related, a.databases, a.inbox]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase, b.related, b.databases, b.inbox])
+  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase, a.related, a.databases, a.inbox, a.templates]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase, b.related, b.databases, b.inbox, b.templates])
 
 // INIT
 
@@ -820,6 +849,13 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'theme', label: model.me.isDark ? 'Light theme' : 'Dark theme', group: 'Account', shortcut: 'Ctrl Shift L' },
         { value: 'logout', label: 'Log out', group: 'Account' },
       ]
+    case 'templates':
+      return [
+        ...model.templates.map(template => ({ value: `use:${template.id}`, label: template.title, group: 'Templates' })),
+        { value: 'empty', label: 'Empty page', group: 'Templates' },
+        ...model.templates.map(template => ({ value: `edit:${template.id}`, label: `Edit ${template.title}`, group: 'Edit templates' })),
+        { value: 'add', label: 'New template', group: 'Edit templates' },
+      ]
     case 'addView':
       return D.LAYOUTS.map(layout => ({ value: `layout:${layout}`, label: D.LAYOUT_LABEL[layout], group: 'Layout' }))
     case 'options': {
@@ -957,6 +993,8 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'cell':
     case 'cells':
       return chooseCell(model, picker, value)
+    case 'templates':
+      return chooseTemplate(model, value)
     case 'property':
     case 'propertyType':
     case 'relation':
@@ -1216,6 +1254,22 @@ const cellItems = (model: Model, target: string, query: string): ReadonlyArray<P
     ...options.map(option => ({ value: `option:${option.id}`, label: option.name, isChecked: chosen.includes(option.id), ...('group' in option ? { group: option.group === 'todo' ? 'To-do' : option.group === 'inProgress' ? 'In progress' : 'Complete' } : {}) })),
     ...(canCreate ? [{ value: 'create', label: `Create "${name}"`, keywords: name }] : []),
   ]
+}
+
+/** A choice in the "New page" templates menu; ids are checked against the open database's templates. */
+const chooseTemplate = (model: Model, value: string): UpdateReturn => {
+  const closed = { ...model, picker: null }
+  const page = editableDatabase(model)
+  if (page === null) return { model: closed }
+  const actorId = model.me.id
+  const known = (prefix: string) => model.templates.find(template => `${prefix}:${template.id}` === value)
+  const used = known('use')
+  const edited = known('edit')
+  return value === 'empty' ? update(closed, Message.ClickedNewRow())
+    : value === 'add' ? { model: closed, commands: [AddTemplate({ databaseId: page.id, actorId })] }
+    : used !== undefined ? { model: closed, commands: [AddFromTemplate({ templateId: used.id, actorId })] }
+    : edited !== undefined ? { model: closed, commands: [LoadUrl({ url: `/p/${edited.id}` })] }
+    : { model: closed }
 }
 
 const chooseCell = (model: Model, picker: Picker, value: string): UpdateReturn => {
@@ -1549,6 +1603,10 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       return pickDate(model, null)
     case 'ClosedDate':
       return { model: withDb(model, { datePick: null }) }
+    case 'ClickedTemplates': {
+      const page = editableDatabase(model)
+      return page === null ? { model } : { model: withPicker(model, openPicker('templates', page.id, TEMPLATES_ANCHOR)) }
+    }
     case 'ClickedNewRow': {
       const page = editableDatabase(model)
       const view = page === null ? null : activeView(page.database, model.db)
@@ -1696,7 +1754,7 @@ const keepHistory = (model: Model): Model => {
 const DATABASE_TAGS = [
   'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName', 'ClickedCalc', 'ChangedFormula', 'SubmittedFormula', 'CancelledFormula',
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
-  'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
+  'ClickedNewRow', 'ClickedTemplates', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
   'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts', 'ClickedPeek', 'ClosedPeek', 'ResizedColumn', 'ToggledGroup',
 ] as const
@@ -2009,6 +2067,7 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   clearDate: Message.ClearedDate(),
   closeDate: Message.ClosedDate(),
   newRow: Message.ClickedNewRow(),
+  templates: Message.ClickedTemplates(),
   search: Message.ClickedDbSearch(),
   query: query => Message.ChangedDbQuery({ query }),
   newInGroup: key => Message.ClickedNewInGroup({ key }),
@@ -2094,6 +2153,9 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
     ], children: [
       ...coverView(page, isEditable, HEADER_ACTIONS, h, model.coverDraft),
       box({ as: 'article', class: cn('mx-auto w-full pb-40', page.isFullWidth ? 'max-w-none px-24' : 'max-w-[708px] px-6', hasCover ? 'pt-0' : 'pt-20'), children: [
+          ...(page.isTemplate === true
+            ? [box({ class: 'mb-4 rounded-md bg-accent px-3 py-2 text-[13px] text-muted-foreground', attributes: [h.Id('template-banner')], children: [`You are editing a template${model.parentDatabase === null ? '' : ` in ${model.crumbs.at(-2)?.title || 'this database'}`}. New pages made from it start with this title, icon, properties and content.`] }, h)]
+            : []),
           box({ as: 'header', class: 'group/header', children: [
               ...iconAndControls(page, isEditable, canComment(model) && model.composer?._tag !== 'NewDiscussion', HEADER_ACTIONS, h),
               box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [

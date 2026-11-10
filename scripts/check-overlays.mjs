@@ -115,6 +115,7 @@ try {
       ['#row-count', 'the Count calculation menu'],
       ['#add-property', 'the + property menu'],
       ['#add-view', 'the + view menu'],
+      ['#new-row-templates', 'the New page templates menu'],
       ['#database-filter', 'the Filter menu'],
       ['#database-sort', 'the Sort menu'],
       ['#view-demo-tasks-table', 'the view menu'],

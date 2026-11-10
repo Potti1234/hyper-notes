@@ -86,6 +86,7 @@ export const calcAnchor = (propertyId: string) => `--calc-${propertyId}`
 export const cellAnchor = (rowId: string, propertyId: string, scope = '') => `--${scope}cell-${rowId}-${propertyId}`
 export const viewAnchor = (viewId: string) => `--view-${viewId}`
 export const ADD_VIEW_ANCHOR = '--add-view'
+export const TEMPLATES_ANCHOR = '--templates'
 export const ADD_PROPERTY_ANCHOR = '--add-property'
 export const FILTER_ANCHOR = '--add-filter'
 export const SORT_ANCHOR = '--sorts'
@@ -149,6 +150,7 @@ export type DatabaseMessages<Msg> = Readonly<{
   clearDate: Msg
   closeDate: Msg
   newRow: Msg
+  templates: Msg
   search: Msg
   query: (query: string) => Msg
   newInGroup: (key: string) => Msg
@@ -362,7 +364,7 @@ const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
             ] }, h)),
         ] }, h),
       box({ class: 'flex items-center border-b', children: [
-          button({ variant: 'quiet', size: 'compact', id: 'new-row', isDisabled: !props.isEditable, onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h),
+          newRowButtons(props, h),
         ] }, h),
       box({ class: cn(DB_GRID.row, DB_GRID.calcs), attributes: [h.Id('database-calcs')], children: [
           calcCell(view, null, rows, props, h),
@@ -489,13 +491,13 @@ const listView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, prop
           box({ class: 'min-w-0 flex-1', children: [titleLink(row, props, h)] }, h),
           box({ class: 'flex shrink-0 items-center gap-3', children: values(shownOn(view, props.database), row, props.people, h) }, h),
         ] }, h)),
-      ...(props.isEditable ? [box({ class: 'flex', children: [button({ variant: 'quiet', size: 'compact', id: 'new-row', onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h)] }, h)] : []),
+      ...(props.isEditable ? [newRowButtons(props, h)] : []),
     ] }, h)
 
 const galleryView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
   box({ class: DB_VIEW.gallery, attributes: [h.Id('database-gallery'), h.DataAttribute('layout', 'gallery'), h.DataAttribute('size', view.cardSize ?? 'medium')], children: [
       ...rows.map(row => card(view, row, props, h, true)),
-      ...(props.isEditable ? [button({ variant: 'quiet', size: 'compact', id: 'new-row', onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h)] : []),
+      ...(props.isEditable ? [newRowButtons(props, h)] : []),
     ] }, h)
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -539,6 +541,13 @@ const layoutView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pr
 }
 
 /** Tabs, toolbar and the active view of a database page. */
+/** "New page" and the menu of templates next to it. */
+const newRowButtons = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
+  box({ class: 'flex items-center', style: { anchorName: TEMPLATES_ANCHOR }, children: [
+      button({ variant: 'quiet', size: 'compact', id: 'new-row', isDisabled: !props.isEditable, onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h),
+      button({ variant: 'quiet', size: 'compact', id: 'new-row-templates', ariaLabel: 'New page from a template', title: 'Templates', isDisabled: !props.isEditable, onClick: props.msgs.templates, children: [Icon.icon('chevron-down', { class: 'size-4' }, h)] }, h),
+    ] }, h)
+
 export const databaseView = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const { database, ui, msgs } = props
   const view = activeView(database, ui)

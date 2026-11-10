@@ -403,6 +403,24 @@ export const addRow = (databaseId: string, input: Readonly<{ title: string; valu
     return yield* createPage({ parentId: parent.id, section: parent.section, title: input.title, beforeId: input.beforeId, values }, actorId)(data, context)
   })
 
+/** A new template in a database: a hidden row, edited as a page. */
+export const addTemplate = (databaseId: string, actorId: string): Op<Page, InvalidChange> => (data, context) =>
+  Effect.gen(function* () {
+    const [row, next] = yield* addRow(databaseId, { title: 'New template', values: {}, beforeId: null }, actorId)(data, context)
+    const template: Page = { ...row, isTemplate: true }
+    return [template, { ...next, pages: next.pages.map(page => (page.id === row.id ? template : page)) }] as const
+  })
+
+/** A new row starting with a template's title, icon, values and content. */
+export const addFromTemplate = (templateId: string, actorId: string): Op<Page, InvalidChange> => (data, context) =>
+  Effect.gen(function* () {
+    const template = yield* visiblePage(data, templateId, actorId)
+    if (template.isTemplate !== true || template.parentId === null || isTrashed(data.pages, template)) return yield* invalid('That template is gone.')
+    const [row, next] = yield* addRow(template.parentId, { title: template.title === 'New template' ? '' : template.title, values: template.values, beforeId: null }, actorId)(data, context)
+    const filled: Page = { ...row, icon: template.icon, content: template.content.map(block => copyWithIds(block, () => context.id('blk'))) }
+    return [filled, { ...next, pages: next.pages.map(page => (page.id === row.id ? filled : page)) }] as const
+  })
+
 /** Deletes a trashed page and everything inside it for good. */
 export const deletePage = (pageId: string, actorId: string): Op<number, InvalidChange> => data =>
   Effect.gen(function* () {

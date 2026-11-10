@@ -53,6 +53,7 @@ const migrate = (sql: Sql) =>
       yield* sql`ALTER TABLE members ADD COLUMN IF NOT EXISTS is_sidebar_collapsed BOOLEAN NOT NULL DEFAULT FALSE`
       yield* sql`ALTER TABLE members ADD COLUMN IF NOT EXISTS inbox_seen_at BIGINT NOT NULL DEFAULT 0`
       yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS database JSONB`
+      yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS is_template BOOLEAN NOT NULL DEFAULT FALSE`
       yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS row_values JSONB NOT NULL DEFAULT '{}'`
       yield* sql`CREATE TABLE IF NOT EXISTS favorites (member_id TEXT NOT NULL, page_id TEXT NOT NULL, position DOUBLE PRECISION NOT NULL, PRIMARY KEY (member_id, page_id))`
       yield* sql`
@@ -85,7 +86,7 @@ const memberRow = (member: Member, data: WorkspaceData): Row => ({
 const pageRow = (page: Page): Row => ({
   id: page.id, parent_id: page.parentId, section: page.section, owner_id: page.ownerId, position: page.position, title: page.title, icon: page.icon,
   cover: JSON.stringify(page.cover), cover_position: page.coverPosition, font: page.font, is_small_text: page.isSmallText, is_full_width: page.isFullWidth,
-  is_locked: page.isLocked, content: JSON.stringify(page.content), database: page.database === null ? null : JSON.stringify(page.database), row_values: JSON.stringify(page.values), created_by: page.createdBy, created_at: page.createdAt, updated_by: page.updatedBy,
+  is_locked: page.isLocked, is_template: page.isTemplate === true, content: JSON.stringify(page.content), database: page.database === null ? null : JSON.stringify(page.database), row_values: JSON.stringify(page.values), created_by: page.createdBy, created_at: page.createdAt, updated_by: page.updatedBy,
   updated_at: page.updatedAt, trashed_at: page.trashedAt, trashed_by: page.trashedBy, is_demo: page.isDemo,
 })
 
@@ -183,6 +184,7 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
         isSmallText: row['is_small_text'] === true,
         isFullWidth: row['is_full_width'] === true,
         isLocked: row['is_locked'] === true,
+        ...(row['is_template'] === true ? { isTemplate: true } : {}),
         content: decodeDocument(json(row['content'])),
         database: row['database'] == null ? null : decodeDatabase(json(row['database'])),
         values: row['row_values'] == null ? {} : decodeValues(json(row['row_values'])),

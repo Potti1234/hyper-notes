@@ -39,6 +39,8 @@ import {
   changeDatabase,
   setValue,
   addRow,
+  addTemplate,
+  addFromTemplate,
 } from './workspace'
 
 export { InvalidChange } from './workspace'
@@ -97,6 +99,8 @@ export class Workspace extends Context.Service<
     readonly changeDatabase: (pageId: string, change: DatabaseChange, actorId: string) => Effect.Effect<string | null, InvalidChange>
     readonly setValue: (rowId: string, propertyId: string, value: Value | null, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly addRow: (databaseId: string, input: Readonly<{ title: string; values: Page['values']; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly addTemplate: (databaseId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly addFromTemplate: (templateId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly movePage: (pageId: string, target: Readonly<{ parentId: string | null; section: Section; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly duplicatePage: (pageId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly trashPage: (pageId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
@@ -148,6 +152,8 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
   changeDatabase: (pageId, change, actorId) => traced(backend, 'changeDatabase', changeDatabase(pageId, change, actorId)),
   setValue: (rowId, propertyId, value, actorId) => traced(backend, 'setValue', setValue(rowId, propertyId, value, actorId)),
   addRow: (databaseId, input, actorId) => traced(backend, 'addRow', addRow(databaseId, input, actorId)),
+  addTemplate: (databaseId, actorId) => traced(backend, 'addTemplate', addTemplate(databaseId, actorId)),
+  addFromTemplate: (templateId, actorId) => traced(backend, 'addFromTemplate', addFromTemplate(templateId, actorId)),
   movePage: (pageId, target, actorId) => traced(backend, 'movePage', movePage(pageId, target, actorId)),
   duplicatePage: (pageId, actorId) => traced(backend, 'duplicatePage', duplicatePage(pageId, actorId)),
   trashPage: (pageId, actorId) => traced(backend, 'trashPage', trashPage(pageId, actorId)),

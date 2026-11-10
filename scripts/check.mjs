@@ -835,6 +835,23 @@ try {
   check('Log out (typed, then Enter) signs out', await until(leaving.page, () => location.pathname === '/login'))
   await leaving.page.goto(`${base}/p/demo-wiki`)
   check('after it, pages ask to sign in again', await until(leaving.page, () => location.pathname === '/login'))
+
+  // Templates: New template opens a hidden row as a page; picking it makes a new row like it.
+  const openTemplates = async () => {
+    await visit(avery.page, '/p/demo-tasks')
+    await avery.page.locator('#new-row-templates').click()
+    await avery.page.waitForSelector('#picker[data-field="templates"]', { timeout: TIMEOUT })
+  }
+  await openTemplates()
+  await choose(avery.page, 'New template')
+  check('New template opens the template as a page with a banner', await until(avery.page, () => document.querySelector('#template-banner') !== null))
+  await avery.page.locator('#page-title').fill('Bug report')
+  await avery.page.locator('#page-title').press('Enter')
+  await settle(avery.page)
+  await openTemplates()
+  check('the template is listed in the menu, not as a row', await until(avery.page, () => [...document.querySelectorAll('#picker [role="option"]')].some(option => option.textContent?.includes('Edit Bug report')) && ![...document.querySelectorAll('[data-row]')].some(row => row.textContent?.includes('Bug report'))))
+  await choose(avery.page, 'Bug report')
+  check('picking a template opens a new row page with its title', await until(avery.page, () => location.pathname !== '/p/demo-tasks' && document.querySelector('#page-title')?.value === 'Bug report' && document.querySelector('#template-banner') === null))
 } finally {
   await browser.close()
 }

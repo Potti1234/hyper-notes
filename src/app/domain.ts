@@ -93,6 +93,8 @@ export const Page = S.Struct({
   isSmallText: S.Boolean,
   isFullWidth: S.Boolean,
   isLocked: S.Boolean,
+  /** A database row kept as a template for new rows, not listed as a row. */
+  isTemplate: S.optionalKey(S.Boolean),
   content: S.Array(Block),
   /** Set when the page is a database: its rows are its child pages. */
   database: S.NullOr(Database),
