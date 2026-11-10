@@ -416,6 +416,10 @@ try {
   check('the moved card changes its status for everyone', await until(morgan.page, () => document.querySelector('#cell-demo-task-1-demo-status')?.textContent === 'Done'))
   await avery.page.locator('#new-in-demo-doing').click()
   check('+ New in a column adds a row to that column', await until(avery.page, () => [...document.querySelectorAll('#database-board [data-group="demo-doing"] [data-row]')].some(row => !row.getAttribute('data-row')?.startsWith('demo-'))))
+  await avery.page.locator('#hide-group-demo-done').click()
+  check('hiding a board group moves it under Hidden groups', await until(avery.page, () => document.querySelector('#database-board > [data-group="demo-done"]') === null && document.querySelector('#show-group-demo-done') !== null))
+  await avery.page.locator('#show-group-demo-done').click()
+  check('clicking a hidden group shows it again', await until(avery.page, () => document.querySelector('#database-board > [data-group="demo-done"]') !== null && document.querySelector('#hidden-groups') === null))
   await addView(avery.page, 'List')
   check('+ List shows one line per row', await until(avery.page, () => document.querySelectorAll('#database-list [data-row]').length === 4))
   check('list lines show their properties on the right', await until(avery.page, () => document.querySelector('#database-list [data-row="demo-task-1"] [data-value="demo-status"]')?.textContent === 'Done'))
@@ -459,6 +463,15 @@ try {
   await until(avery.page, () => document.querySelector('#picker[data-field="view"]') !== null)
   await choose(avery.page, 'Status')
   check('grouping the table puts rows under status headers', await until(avery.page, () => [...document.querySelectorAll('#database-table [data-group]')].map(group => group.getAttribute('data-group')).join(',') === 'demo-todo,demo-doing,demo-done,' && document.querySelector('#database-table [data-count="demo-done"]')?.textContent === '2'))
+
+  // COLUMN WIDTHS: dragging a header's edge resizes the column for everyone.
+  const edge = await avery.page.locator('#database-table [data-resize-column="title"]').boundingBox()
+  await avery.page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2)
+  await avery.page.mouse.down()
+  await avery.page.mouse.move(edge.x + 50, edge.y + edge.height / 2, { steps: 4 })
+  await avery.page.mouse.move(edge.x + edge.width / 2 + 100, edge.y + edge.height / 2, { steps: 4 })
+  await avery.page.mouse.up()
+  check('dragging a column edge resizes it for everyone', await until(morgan.page, () => Math.round(document.querySelector('#database-table [role="columnheader"][data-column="title"]')?.getBoundingClientRect().width ?? 0) === 360))
 
   // ROW PEEKS: side and center peeks edit a row over its database; full page links to it.
   await avery.page.locator('#open-demo-task-2').click()

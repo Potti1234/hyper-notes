@@ -231,3 +231,10 @@
 .nb-db-peek { position: fixed; top: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; width: min(680px, 94vw); background: var(--background); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgb(0 0 0 / 0.08); }
 .nb-db-peek[data-peek="center"] { top: 6vh; bottom: 6vh; left: 50%; right: auto; width: min(960px, 94vw); transform: translateX(-50%); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.18); }
 .nb-db-backdrop { position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / 0.3); }
+.nb-db-head { position: relative; }
+.nb-db-resize { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 1; width: 6px; cursor: col-resize; touch-action: none; }
+@media (hover: hover) {
+  .nb-db-resize:hover { background: color-mix(in oklab, var(--primary) 40%, transparent); }
+}
+.nb-db-gallery[data-size="small"] { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.nb-db-gallery[data-size="large"] { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }

@@ -1,7 +1,7 @@
 import { assert, describe, it } from '@effect/vitest'
 
 import type { Page } from '@/app/domain'
-import type * as D from '@/app/database'
+import * as D from '@/app/database'
 import { filterLabel, isDay, isMonth, monthDays, shiftMonth } from '@/app/page/database-view'
 import * as PagePage from '@/app/page/page'
 import { DEMO_MEMBERS, demoData } from '@/app/seed'
@@ -320,6 +320,40 @@ describe('page: databases', () => {
       const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
       const full = PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
       assert.isNull(send(full, PagePage.Message.ClickedPeek({ rowId: 'demo-task-1' })).model.db.peek)
+    })
+  })
+
+  describe('column widths, hidden groups and card sizes', () => {
+    const tasks = (view: Partial<D.DatabaseView>) => {
+      const data = demoData(NOW)
+      const pages = data.pages.map(page => page.id === 'demo-tasks' && page.database !== null
+        ? { ...page, database: { ...page.database, views: page.database.views.map(entry => ({ ...entry, ...view })) } }
+        : page)
+      const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
+      return PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
+    }
+
+    it('a dragged column edge saves its width; widths are clamped', () => {
+      assert.deepInclude(argsOf(send(model('demo-tasks'), PagePage.Message.ResizedColumn({ propertyId: 'title', width: 340 })), 'ChangeDatabase'), { change: { _tag: 'SetWidth', viewId: 'demo-tasks-table', propertyId: 'title', width: 340 } })
+      assert.deepStrictEqual(names(send(model('demo-tasks'), PagePage.Message.ResizedColumn({ propertyId: 'nope', width: 340 }))), [])
+      const database = tasks({}).page!.database!
+      let serial = 0
+      const narrow = D.applyChange(database, { _tag: 'SetWidth', viewId: 'demo-tasks-table', propertyId: 'title', width: 5 }, prefix => `${prefix}-${++serial}`)
+      assert.deepStrictEqual(typeof narrow === 'string' ? narrow : narrow.database.views[0]?.widths, { title: D.MIN_WIDTH })
+      assert.isString(D.applyChange(database, { _tag: 'SetWidth', viewId: 'demo-tasks-table', propertyId: 'title', width: Number.NaN }, prefix => prefix))
+    })
+
+    it('a board group hides and shows; unknown groups are refused', () => {
+      const board = tasks({ layout: 'board', groupBy: 'demo-status' })
+      assert.deepInclude(argsOf(send(board, PagePage.Message.ToggledGroup({ key: 'demo-done', isHidden: true })), 'ChangeDatabase'), { change: { _tag: 'SetGroupHidden', viewId: 'demo-tasks-table', key: 'demo-done', isHidden: true } })
+      assert.deepStrictEqual(names(send(board, PagePage.Message.ToggledGroup({ key: 'nope', isHidden: true }))), [])
+      assert.deepStrictEqual(names(send(tasks({}), PagePage.Message.ToggledGroup({ key: 'demo-done', isHidden: true }))), [], 'not grouped')
+    })
+
+    it('a gallery view menu sets the card size', () => {
+      const gallery = send(tasks({ layout: 'gallery' }), PagePage.Message.ClickedViewMenu({ viewId: 'demo-tasks-table' }))
+      assert.isTrue(PagePage.pickerItems(gallery.model).some(item => item.value === 'size:medium' && item.isChecked === true))
+      assert.deepInclude(argsOf(send(gallery.model, PagePage.Message.ChosePicker({ value: 'size:large' })), 'ChangeDatabase'), { change: { _tag: 'SetCardSize', viewId: 'demo-tasks-table', size: 'large' } })
     })
   })
 })

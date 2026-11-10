@@ -76,6 +76,7 @@ export const DB_VIEW = {
 export const DB_GRID = {
   scroll: 'nb-db-scroll',
   table: 'nb-db-table',
+  resize: 'nb-db-resize',
   row: 'nb-db-row',
   cell: 'nb-db-cell',
   head: 'nb-db-head',

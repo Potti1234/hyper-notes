@@ -1,5 +1,5 @@
 import { Option, Schema as S } from 'effect'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
 
 import * as Icon from '@/lib/icon'
 import { cn } from '@/lib/utils'
@@ -144,6 +144,8 @@ export type DatabaseMessages<Msg> = Readonly<{
   sorts: Msg
   peek: (rowId: string) => Msg
   closePeek: Msg
+  resize: (propertyId: string, width: number) => Msg
+  hideGroup: (key: string, isHidden: boolean) => Msg
 }>
 
 export type CellContext<Msg> = Readonly<{
@@ -242,12 +244,27 @@ export const cellView = <Msg>(property: D.Property | null, row: RowEntry, contex
 
 export type DatabaseProps<Msg> = CellContext<Msg> & Readonly<{ pageId: string; database: D.Database; rows: ReadonlyArray<RowEntry> }>
 
+const widthOf = <Msg>(props: DatabaseProps<Msg>, propertyId: string): Readonly<Record<string, string>> => {
+  const width = activeView(props.database, props.ui)?.widths?.[propertyId]
+  return width === undefined ? {} : { width: `${width}px` }
+}
+
+const ResizeDetail = S.Struct({ propertyId: S.String, width: S.Number })
+
+/** The table's one listener for column edges dragged in the browser (public/column-resize.js). */
+const onResize = <Msg>(props: DatabaseProps<Msg>): Attribute<Msg> => ({
+  _tag: 'OnCustomEvent',
+  name: 'hyperresize',
+  f: (event: CustomEvent<unknown>) => Option.map(S.decodeUnknownOption(ResizeDetail)(event.detail), detail => props.msgs.resize(detail.propertyId, detail.width)),
+})
+
 const headerCell = <Msg>(property: D.Property | null, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const { ui, msgs } = props
   const propertyId = property?.id ?? D.TITLE
   const name = property?.name ?? 'Name'
   const renaming = property !== null && ui.renaming?.propertyId === property.id ? ui.renaming : null
-  return box({ class: cn(DB_GRID.cell, DB_GRID.head, property === null && DB_GRID.title), attributes: [h.Role('columnheader')], style: { anchorName: headerAnchor(propertyId) }, children: [
+  return box({ class: cn(DB_GRID.cell, DB_GRID.head, property === null && DB_GRID.title), attributes: [h.Role('columnheader'), h.DataAttribute('column', propertyId)], style: { anchorName: headerAnchor(propertyId), ...widthOf(props, propertyId) }, children: [
+      ...(props.isEditable ? [box({ as: 'span', class: DB_GRID.resize, attributes: [h.DataAttribute('resize-column', propertyId), h.Title('Drag to resize')], children: [] }, h)] : []),
       renaming !== null
         ? box({ as: 'form', class: 'w-full px-1', attributes: [h.OnSubmit(msgs.submitPropertyName), h.OnFocusLeave(msgs.submitPropertyName)], children: [
             input({ id: PROPERTY_NAME_ID, value: renaming.name, ariaLabel: 'Property name', autocomplete: 'off', variant: 'compact', onInput: msgs.propertyName }, h),
@@ -307,7 +324,7 @@ const filterBar = <Msg>(view: D.DatabaseView, props: DatabaseProps<Msg>, h: Html
 const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const shownProperties = props.database.properties.filter(property => !view.hidden.includes(property.id))
   return box({ class: DB_GRID.scroll, attributes: [h.Id('database-table'), h.DataAttribute('layout', 'table')], children: [
-      box({ class: DB_GRID.table, attributes: [h.Role('table'), h.AriaLabel(view.name)], children: [
+      box({ class: DB_GRID.table, attributes: [h.Role('table'), h.AriaLabel(view.name), ...(props.isEditable ? [onResize(props)] : [])], children: [
           box({ class: DB_GRID.row, attributes: [h.Role('row')], children: [
               headerCell(null, props, h),
               ...shownProperties.map(property => headerCell(property, props, h)),
@@ -316,8 +333,8 @@ const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
                 ] }, h),
             ] }, h),
           ...grouped(view, rows, props, h, row => box({ class: DB_GRID.row, attributes: [h.Role('row'), h.DataAttribute('row', row.id)], children: [
-              box({ class: cn(DB_GRID.cell, DB_GRID.title), attributes: [h.Role('cell')], children: [cellView(null, row, props, h)] }, h),
-              ...shownProperties.map(property => box({ class: DB_GRID.cell, attributes: [h.Role('cell')], children: [cellView(property, row, props, h)] }, h)),
+              box({ class: cn(DB_GRID.cell, DB_GRID.title), attributes: [h.Role('cell'), h.DataAttribute('column', D.TITLE)], style: widthOf(props, D.TITLE), children: [cellView(null, row, props, h)] }, h),
+              ...shownProperties.map(property => box({ class: DB_GRID.cell, attributes: [h.Role('cell'), h.DataAttribute('column', property.id)], style: widthOf(props, property.id), children: [cellView(property, row, props, h)] }, h)),
               box({ class: cn(DB_GRID.cell, DB_GRID.add), children: [] }, h),
             ] }, h)),
         ] }, h),
@@ -395,20 +412,35 @@ const card = <Msg>(view: D.DatabaseView, row: RowEntry, props: DatabaseProps<Msg
       box({ class: 'flex flex-col gap-1 p-2', children: [titleLink(row, props, h), ...values(shownOn(view, props.database), row, props.people, h)] }, h),
     ] }, h)
 
+const groupSlug = (key: string) => (key === D.NO_GROUP ? 'none' : key)
+
+/** Hidden board groups, after the shown ones; clicking one shows it again. */
+const hiddenGroupsView = <Msg>(property: D.Property, groups: ReadonlyArray<D.Group<RowEntry>>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): ReadonlyArray<Html> =>
+  groups.length === 0 ? [] : [box({ as: 'section', class: DB_VIEW.column, attributes: [h.Id('hidden-groups'), h.AriaLabel('Hidden groups')], children: [
+      box({ class: 'px-1 pb-2 text-[14px] text-muted-foreground', children: ['Hidden groups'] }, h),
+      ...groups.map(group => button({ variant: 'quiet', size: 'compact', id: `show-group-${groupSlug(group.key)}`, ariaLabel: `Show ${group.label}`, isDisabled: !props.isEditable, onClick: props.msgs.hideGroup(group.key, false), children: [
+          optionChip({ color: group.color, isStatus: property.type._tag === 'Status', children: [group.label] }, h),
+          box({ as: 'span', class: 'ml-auto text-muted-foreground', children: [String(group.rows.length)] }, h),
+        ] }, h)),
+    ] }, h)]
+
 const boardView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const property = view.groupBy === null ? null : D.propertyOf(props.database, view.groupBy)
   if (property === null || !D.canGroupBy(property)) {
     return box({ class: 'py-8 text-center text-[14px] text-muted-foreground', attributes: [h.Id('database-board'), h.DataAttribute('layout', 'board')], children: ['Group this board by a select, status or person property in the view menu.'] }, h)
   }
-  return box({ class: DB_VIEW.board, attributes: [h.Id('database-board'), h.DataAttribute('layout', 'board'), h.DataAttribute('group-by', property.id)], children: D.groupRows(property, rows, props.people).map(group =>
+  return box({ class: DB_VIEW.board, attributes: [h.Id('database-board'), h.DataAttribute('layout', 'board'), h.DataAttribute('group-by', property.id)], children: [...D.groupRows(property, rows, props.people).filter(group => !(view.hiddenGroups ?? []).includes(group.key)).map(group =>
       box({ as: 'section', class: DB_VIEW.column, attributes: [h.DataAttribute('group', group.key), h.AriaLabel(group.label), ...dropAttributes(group.key, props, h)], children: [
           box({ class: 'flex items-center gap-2 px-1 pb-2 text-[14px]', children: [
               optionChip({ color: group.color, isStatus: property.type._tag === 'Status', children: [group.label] }, h),
               box({ as: 'span', class: 'text-muted-foreground', attributes: [h.DataAttribute('count', group.key)], children: [String(group.rows.length)] }, h),
+              ...(props.isEditable ? [box({ class: 'ml-auto flex', children: [button({ variant: 'ghost', size: 'icon-xs', id: `hide-group-${groupSlug(group.key)}`, ariaLabel: `Hide ${group.label}`, title: 'Hide group', onClick: props.msgs.hideGroup(group.key, true), children: [Icon.icon('eye-off', { class: 'size-3.5' }, h)] }, h)] }, h)] : []),
             ] }, h),
           ...group.rows.map(row => card(view, row, props, h)),
           ...(props.isEditable ? [button({ variant: 'quiet', size: 'compact', id: `new-in-${group.key === D.NO_GROUP ? 'none' : group.key}`, onClick: props.msgs.newInGroup(group.key), children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h)] : []),
-        ] }, h)) }, h)
+        ] }, h)),
+      ...hiddenGroupsView(property, D.groupRows(property, rows, props.people).filter(group => (view.hiddenGroups ?? []).includes(group.key)), props, h),
+    ] }, h)
 }
 
 const listView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
@@ -421,7 +453,7 @@ const listView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, prop
     ] }, h)
 
 const galleryView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
-  box({ class: DB_VIEW.gallery, attributes: [h.Id('database-gallery'), h.DataAttribute('layout', 'gallery')], children: [
+  box({ class: DB_VIEW.gallery, attributes: [h.Id('database-gallery'), h.DataAttribute('layout', 'gallery'), h.DataAttribute('size', view.cardSize ?? 'medium')], children: [
       ...rows.map(row => card(view, row, props, h, true)),
       ...(props.isEditable ? [button({ variant: 'quiet', size: 'compact', id: 'new-row', onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h)] : []),
     ] }, h)

@@ -89,6 +89,13 @@ export const OpenIn = S.Literals(OPEN_INS)
 export type OpenIn = typeof OpenIn.Type
 export const OPEN_IN_LABEL: Readonly<Record<OpenIn, string>> = { side: 'Side peek', center: 'Center peek', full: 'Full page' }
 
+export const CARD_SIZES = ['small', 'medium', 'large'] as const
+export const CardSize = S.Literals(CARD_SIZES)
+export type CardSize = typeof CardSize.Type
+export const CARD_SIZE_LABEL: Readonly<Record<CardSize, string>> = { small: 'Small', medium: 'Medium', large: 'Large' }
+export const MIN_WIDTH = 80
+export const MAX_WIDTH = 800
+
 export const DatabaseView = S.Struct({
   id: S.String,
   name: S.String,
@@ -103,6 +110,12 @@ export const DatabaseView = S.Struct({
   dateBy: S.NullOr(S.String),
   /** How its rows open; side peek when missing. */
   openIn: S.optionalKey(OpenIn),
+  /** Table column widths in px by property id; 180 (260 for the title) when missing. */
+  widths: S.optionalKey(S.Record(S.String, S.Number)),
+  /** Board groups folded into Hidden groups. */
+  hiddenGroups: S.optionalKey(S.Array(S.String)),
+  /** Gallery card size; medium when missing. */
+  cardSize: S.optionalKey(CardSize),
 })
 export type DatabaseView = typeof DatabaseView.Type
 
@@ -477,6 +490,9 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetFilter', { viewId: S.String, filterId: S.String, operator: Operator, value: S.String }),
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
+  S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
+  S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
+  S.TaggedStruct('SetCardSize', { viewId: S.String, size: CardSize }),
   S.TaggedStruct('SetOpenIn', { viewId: S.String, openIn: OpenIn }),
   S.TaggedStruct('MoveSort', { viewId: S.String, propertyId: S.String }),
   S.TaggedStruct('SetGroupBy', { viewId: S.String, propertyId: S.NullOr(S.String) }),
@@ -620,6 +636,19 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
         const sort = { propertyId: change.propertyId, isDescending: change.isDescending }
         return { ...view, sorts: existing < 0 ? [...others, sort] : view.sorts.map(entry => (entry.propertyId === change.propertyId ? sort : entry)) }
       })
+    case 'SetWidth': {
+      if (!isProperty(change.propertyId)) return 'That property is gone.'
+      if (!Number.isFinite(change.width)) return 'That width does not fit.'
+      const width = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, change.width)))
+      return withView(change.viewId, view => ({ ...view, widths: { ...view.widths, [change.propertyId]: width } }))
+    }
+    case 'SetGroupHidden':
+      return withView(change.viewId, view => {
+        const hidden = (view.hiddenGroups ?? []).filter(key => key !== change.key)
+        return { ...view, hiddenGroups: change.isHidden ? [...hidden, change.key.slice(0, 200)] : hidden }
+      })
+    case 'SetCardSize':
+      return withView(change.viewId, view => ({ ...view, cardSize: change.size }))
     case 'SetOpenIn':
       return withView(change.viewId, view => ({ ...view, openIn: change.openIn }))
     case 'MoveSort':

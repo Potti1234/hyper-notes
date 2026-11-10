@@ -218,6 +218,8 @@ export const Message = defineMessageUnion({
   ClickedSorts: {},
   ClickedPeek: { rowId: S.String },
   ClosedPeek: {},
+  ResizedColumn: { propertyId: S.String, width: S.Number },
+  ToggledGroup: { key: S.String, isHidden: S.Boolean },
   SucceededDbChange: { addedId: S.NullOr(S.String), change: D.DatabaseChange },
   SucceededAddRow: { rowId: S.String },
   SucceededCreate: { id: S.String },
@@ -296,6 +298,8 @@ export const ClientMessage = S.Union([
   Message.ClickedSorts,
   Message.ClickedPeek,
   Message.ClosedPeek,
+  Message.ResizedColumn,
+  Message.ToggledGroup,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -643,6 +647,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
               { value: 'group:', label: 'None', group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === null },
               ...(model.page?.database?.properties ?? []).filter(D.canGroupBy).map(property => ({ value: `group:${property.id}`, label: property.name, group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === property.id })),
             ]),
+        ...(viewById(model, picker.pageId)?.layout === 'gallery' ? D.CARD_SIZES.map(size => ({ value: `size:${size}`, label: D.CARD_SIZE_LABEL[size], group: 'Card size', isChecked: (viewById(model, picker.pageId)?.cardSize ?? 'medium') === size })) : []),
         ...D.OPEN_INS.map(openIn => { const target = viewById(model, picker.pageId); return { value: `open:${openIn}`, label: D.OPEN_IN_LABEL[openIn], group: 'Open pages in', isChecked: target !== undefined && target !== null && D.openInOf(target) === openIn } }),
         { value: 'duplicate', label: 'Duplicate view' },
         ...((model.page?.database?.views.length ?? 0) > 1 ? [{ value: 'delete', label: 'Delete view' }] : []),
@@ -1094,6 +1099,7 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
           const [kind, rest = ''] = [value.slice(0, value.indexOf(':')), value.slice(value.indexOf(':') + 1)]
           if (kind === 'layout') return S.is(D.Layout)(rest) ? changeDb(model, page, { _tag: 'SetLayout', viewId: target.id, layout: rest }) : { model: closed }
           if (kind === 'group') return changeDb(model, page, { _tag: 'SetGroupBy', viewId: target.id, propertyId: rest === '' ? null : rest })
+          if (kind === 'size') return S.is(D.CardSize)(rest) ? changeDb(model, page, { _tag: 'SetCardSize', viewId: target.id, size: rest }) : { model: closed }
           if (kind === 'open') return S.is(D.OpenIn)(rest) ? changeDb(model, page, { _tag: 'SetOpenIn', viewId: target.id, openIn: rest }) : { model: closed }
           if (kind === 'date') return changeDb(model, page, { _tag: 'SetDateBy', viewId: target.id, propertyId: rest })
           return { model: closed }
@@ -1126,6 +1132,19 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       const view = page?.database == null ? null : activeView(page.database, model.db)
       if (view === null || D.openInOf(view) === 'full' || !model.rows.some(row => row.id === message.rowId)) return { model }
       return { model: focusOn(withDb({ ...model, picker: null }, { peek: message.rowId, editing: null, datePick: null }), '#peek-close') }
+    }
+    case 'ResizedColumn': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      if (page === null || view === null || !Number.isFinite(message.width) || (message.propertyId !== D.TITLE && D.propertyOf(page.database, message.propertyId) === null)) return { model }
+      return { model, commands: [ChangeDatabase({ pageId: page.id, change: { _tag: 'SetWidth', viewId: view.id, propertyId: message.propertyId, width: message.width }, actorId: model.me.id })] }
+    }
+    case 'ToggledGroup': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      const property = page === null || view?.groupBy == null ? null : D.propertyOf(page.database, view.groupBy)
+      if (page === null || view === null || property === null || !D.groupRows(property, model.rows, model.people).some(group => group.key === message.key)) return { model }
+      return { model, commands: [ChangeDatabase({ pageId: page.id, change: { _tag: 'SetGroupHidden', viewId: view.id, key: message.key, isHidden: message.isHidden }, actorId: model.me.id })] }
     }
     case 'ClosedPeek':
       return { model: withDb({ ...model, picker: null }, { peek: null, editing: null, datePick: null }) }
@@ -1342,7 +1361,7 @@ const DATABASE_TAGS = [
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
-  'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts', 'ClickedPeek', 'ClosedPeek',
+  'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts', 'ClickedPeek', 'ClosedPeek', 'ResizedColumn', 'ToggledGroup',
 ] as const
 type PageMessage = Exclude<Message, { _tag: (typeof DATABASE_TAGS)[number] }>
 const isPageMessage = (message: Message): message is PageMessage => !(DATABASE_TAGS as ReadonlyArray<string>).includes(message._tag)
@@ -1571,6 +1590,8 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   sorts: Message.ClickedSorts(),
   peek: rowId => Message.ClickedPeek({ rowId }),
   closePeek: Message.ClosedPeek(),
+  resize: (propertyId, width) => Message.ResizedColumn({ propertyId, width }),
+  hideGroup: (key, isHidden) => Message.ToggledGroup({ key, isHidden }),
 }
 
 const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.text.length === 0 && entry.kind._tag === 'Paragraph')
