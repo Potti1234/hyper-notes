@@ -114,6 +114,8 @@ export const setSidebar = (memberId: string, change: Readonly<{ width?: number; 
     ...(change.width === undefined ? {} : { sidebarWidth: sidebarWidth(change.width) }),
     ...(change.isCollapsed === undefined ? {} : { isSidebarCollapsed: change.isCollapsed }),
   }))
+export const markInboxSeen = (memberId: string): Op<void> => (data, context) =>
+  updateMember(memberId, member => ({ ...member, inboxSeenAt: context.at }))(data, context)
 export const setPreset = (memberId: string, theme: string): Op<void> => updateMember(memberId, member => ({ ...member, theme }))
 
 // PAGES

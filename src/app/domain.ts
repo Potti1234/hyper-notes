@@ -25,6 +25,8 @@ export const Member = S.Struct({
   sidebarWidth: S.optionalKey(S.Number),
   /** Closed with « or Ctrl+\\ and reopened from the top bar. */
   isSidebarCollapsed: S.optionalKey(S.Boolean),
+  /** When they last opened the Inbox; newer mentions and replies are unread. */
+  inboxSeenAt: S.optionalKey(S.Number),
   /** Entered by the demo script (`npm run demo:seed`); `demo:clear` removes it. */
   isDemo: S.Boolean,
 })

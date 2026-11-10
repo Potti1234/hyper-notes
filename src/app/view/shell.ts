@@ -126,6 +126,8 @@ export type SidebarProps<Msg> = Readonly<{
   activeId: string | null
   active: string
   nav: Nav
+  /** Unread mentions and replies, shown next to Inbox. */
+  inboxUnread?: number
   actions?: SidebarActions<Msg>
   drag?: NavDrag | null
   isDark: boolean
@@ -184,10 +186,11 @@ const sectionHeading = <Msg>(h: HtmlBuilder<Msg>, label: string, add: Msg | unde
       ...(add === undefined ? [] : [box({ class: 'opacity-0 group-hover/heading:opacity-100 focus-within:opacity-100', children: [button({ variant: 'ghost', size: 'icon-xs', ariaLabel: `Add a page to ${label}`, title: 'Add a page', onClick: add, children: [Icon.plus({ class: 'size-3.5' }, h)] }, h)] }, h)]),
     ] }, h)
 
-const linkRow = <Msg>(h: HtmlBuilder<Msg>, config: Readonly<{ href: string; label: string; icon: string; isActive: boolean; id: string }>): Html =>
+const linkRow = <Msg>(h: HtmlBuilder<Msg>, config: Readonly<{ href: string; label: string; icon: string; isActive: boolean; id: string; count?: number }>): Html =>
   box({ as: 'a', class: cn(ROW, 'pl-2', config.isActive && 'bg-sidebar-accent text-sidebar-foreground'), attributes: [h.Href(config.href), h.Id(config.id), ...(config.isActive ? [h.AriaCurrent('page')] : [])], children: [
       box({ as: 'span', class: 'flex size-6 shrink-0 items-center justify-center text-muted-foreground', children: [Icon.icon(config.icon, { class: 'size-4' }, h)] }, h),
       box({ as: 'span', class: 'min-w-0 flex-1 truncate', children: [config.label] }, h),
+      ...(config.count === undefined || config.count === 0 ? [] : [box({ as: 'span', class: 'rounded-full bg-primary px-1.5 text-[11px] leading-[18px] font-medium text-primary-foreground', attributes: [h.DataAttribute('unread-count', String(config.count)), h.AriaLabel(`${config.count} unread`)], children: [String(config.count)] }, h)]),
     ] }, h)
 
 const ResizeDetail = S.Struct({ width: S.Number })
@@ -233,6 +236,7 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
                   button({ variant: 'ghost', size: 'dense', id: 'sidebar-search', ariaLabel: 'Search (Ctrl+K)', title: 'Search and quickly jump to a page  Ctrl K', onClick: actions.onSearch, leadingIcon: Icon.icon('search', { class: 'size-4' }, h), children: ['Search'] }, h),
                 ] }, h)]),
           linkRow(h, { href: '/', label: 'Home', icon: 'house', isActive: props.active === '/', id: 'sidebar-home' }),
+          linkRow(h, { href: '/?inbox=1', label: 'Inbox', icon: 'inbox', isActive: props.active === '/?inbox=1', id: 'sidebar-inbox', ...(props.inboxUnread === undefined ? {} : { count: props.inboxUnread }) }),
           linkRow(h, { href: '/settings', label: 'Settings', icon: 'settings', isActive: props.active === '/settings', id: 'sidebar-settings' }),
         ] }, h),
       box({ as: 'nav', class: 'flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2', attributes: [h.AriaLabel('Pages'), h.DataAttribute('keep-scroll', 'sidebar')], children: [

@@ -59,9 +59,9 @@ describe('page: Trash', () => {
     Effect.gen(function* () {
       const { kept, model } = yield* trashModel
       const asked = PagePage.update(model, PagePage.Message.ClickedDeleteForever({ pageId: kept.id })).model
-      const { me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases } = asked
-      const restored = PagePage.Message.GotPage({ me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases, trash: asked.trash.filter(entry => entry.id !== kept.id) })
+      const { me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases, inbox } = asked
+      const restored = PagePage.Message.GotPage({ me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases, inbox, trash: asked.trash.filter(entry => entry.id !== kept.id) })
       assert.isNull(PagePage.update(asked, restored).model.confirmDelete)
-      assert.strictEqual(PagePage.update(asked, PagePage.Message.GotPage({ me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases, trash: asked.trash })).model.confirmDelete, kept.id)
+      assert.strictEqual(PagePage.update(asked, PagePage.Message.GotPage({ me, page, crumbs, backlinks, comments, versions, isFavorite, isInTrash, nav, pages, people, now, rows, parentDatabase, related, databases, inbox, trash: asked.trash })).model.confirmDelete, kept.id)
     }))
 })

@@ -51,6 +51,7 @@ const migrate = (sql: Sql) =>
         )`
       yield* sql`ALTER TABLE members ADD COLUMN IF NOT EXISTS sidebar_width INTEGER NOT NULL DEFAULT 240`
       yield* sql`ALTER TABLE members ADD COLUMN IF NOT EXISTS is_sidebar_collapsed BOOLEAN NOT NULL DEFAULT FALSE`
+      yield* sql`ALTER TABLE members ADD COLUMN IF NOT EXISTS inbox_seen_at BIGINT NOT NULL DEFAULT 0`
       yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS database JSONB`
       yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS row_values JSONB NOT NULL DEFAULT '{}'`
       yield* sql`CREATE TABLE IF NOT EXISTS favorites (member_id TEXT NOT NULL, page_id TEXT NOT NULL, position DOUBLE PRECISION NOT NULL, PRIMARY KEY (member_id, page_id))`
@@ -78,6 +79,7 @@ const memberRow = (member: Member, data: WorkspaceData): Row => ({
   id: member.id, name: member.name, email: member.email, password_hash: data.passwords[member.id] ?? '', color: member.color,
   is_dark: member.isDark, theme: member.theme, is_demo: member.isDemo,
   sidebar_width: sidebarWidth(member.sidebarWidth), is_sidebar_collapsed: member.isSidebarCollapsed === true,
+  inbox_seen_at: member.inboxSeenAt ?? 0,
 })
 
 const pageRow = (page: Page): Row => ({
@@ -165,6 +167,7 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
         id: String(row['id']), name: String(row['name']), email: String(row['email']), color: String(row['color']),
         isDark: row['is_dark'] === true, theme: String(row['theme']), isDemo: row['is_demo'] === true,
         sidebarWidth: sidebarWidth(Number(row['sidebar_width'])), isSidebarCollapsed: row['is_sidebar_collapsed'] === true,
+        inboxSeenAt: Number(row['inbox_seen_at'] ?? 0),
       })),
       pages: pages.map((row): Page => ({
         id: String(row['id']),

@@ -41,6 +41,7 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       yield* one.setFavorite(child.id, true, 'morgan')
       yield* one.setExpanded(DEMO_HOME, true, 'morgan')
       yield* one.setTheme('avery', true)
+      yield* one.markInboxSeen('morgan')
       const thread = yield* one.addComment({ pageId: child.id, threadId: null }, 'Stored comment', 'avery')
       yield* one.resolveThread(thread.id, true, 'morgan')
       const after = yield* two.changes.pipe(Stream.filter(state => state.pages.some(page => page.id === child.id && page.font === 'serif') && state.expanded.length > 0 && state.comments.some(comment => comment.pageId === child.id && comment.resolvedAt !== null) && state.members.some(member => member.id === 'avery' && member.isDark)), Stream.runHead, Effect.timeout('5 seconds'))
@@ -64,6 +65,8 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       const reloaded = yield* fresh.current
       assert.isFalse(reloaded.pages.some(page => page.id === child.id))
       assert.isFalse(reloaded.favorites.some(row => row.pageId === child.id))
+      assert.isAbove(reloaded.members.find(member => member.id === 'morgan')?.inboxSeenAt ?? 0, 0)
+      assert.strictEqual(reloaded.members.find(member => member.id === 'riley')?.inboxSeenAt, 0)
       assert.isFalse(reloaded.comments.some(comment => comment.pageId === child.id))
       assert.isFalse(reloaded.versions.some(version => version.pageId === child.id))
       assert.strictEqual(reloaded.comments.find(comment => comment.id === quoted.id)?.quote, 'Quoted')

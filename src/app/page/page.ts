@@ -31,6 +31,7 @@ import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_A
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, NavDrag, NavDrop, WORKSPACE_ANCHOR, navOf, sameNav, sidebar, workspaceName } from '../view/shell'
 import { SearchHit, docText, searchPages, wordCount } from '../search'
+import { InboxEntry, inboxOf, unreadCount } from '../inbox'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
 /* A page of the workspace: the sidebar, the page's top bar (breadcrumbs,
@@ -50,7 +51,7 @@ export type TrashEntry = typeof TrashEntry.Type
 export const PageEntry = S.Struct({ id: S.String, title: S.String, icon: S.String, path: S.String, section: Section })
 export type PageEntry = typeof PageEntry.Type
 
-export const View = S.Literals(['page', 'trash', 'empty'])
+export const View = S.Literals(['page', 'trash', 'inbox', 'empty'])
 export type View = typeof View.Type
 
 /** Focus to move after the next morph; a new `seq` asks again. */
@@ -121,6 +122,9 @@ export const Model = S.Struct({
   /** Who `@` can mention. */
   people: S.Array(MemberRef),
   trash: S.Array(TrashEntry),
+  inbox: S.Array(InboxEntry),
+  /** Member.inboxSeenAt when the page loaded: what the Inbox marks unread. */
+  inboxSeenBefore: S.Number,
   now: S.Number,
   rows: S.Array(RowEntry),
   parentDatabase: S.NullOr(ParentDatabase),
@@ -217,6 +221,7 @@ export const Message = defineMessageUnion({
     pages: S.Array(PageEntry),
     people: S.Array(MemberRef),
     trash: S.Array(TrashEntry),
+    inbox: S.Array(InboxEntry),
     rows: S.Array(RowEntry),
     parentDatabase: S.NullOr(ParentDatabase),
     related: S.Array(RelatedDatabase),
@@ -577,6 +582,12 @@ export const SetTheme = Command.define('SetTheme', {
   execute: ({ memberId, isDark }) => Workspace.use(workspace => workspace.setTheme(memberId, isDark)).pipe(done),
 })
 
+export const MarkInboxSeen = Command.define('MarkInboxSeen', {
+  args: { memberId: S.String },
+  messages: [Message.CompletedChange],
+  execute: ({ memberId }) => Workspace.use(workspace => workspace.markInboxSeen(memberId)).pipe(done),
+})
+
 export const LoadUrl = Command.define('LoadUrl', {
   args: { url: S.String },
   messages: [Message.CompletedBrowserAction],
@@ -651,6 +662,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     parentDatabase,
     related: relatedOf(state, visible, page?.database == null ? parentDatabase : { id: page.id, database: page.database }),
     databases: visible.filter(entry => entry.database !== null && !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
+    inbox: inboxOf(state, memberId),
     trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, trashedBy: state.members.find(member => member.id === entry.trashedBy)?.name ?? null, path: pathOf(state, entry) })),
     now,
   }
@@ -658,14 +670,15 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase, a.related, a.databases]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase, b.related, b.databases])
+  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase, a.related, a.databases, a.inbox]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase, b.related, b.databases, b.inbox])
 
 // INIT
 
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isSigningOut: false, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, inboxSeenBefore: flags.me.inboxSeenAt ?? 0, isSigningOut: false, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  commands: flags.view === 'inbox' ? [MarkInboxSeen({ memberId: flags.me.id })] : [],
 })
 
 // UPDATE
@@ -1835,7 +1848,11 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
         model.history === null || !canRestore(model) || !model.versions.some(version => version.id === versionId)
           ? { model }
           : { model: { ...model, history: null }, commands: [RestoreVersion({ versionId, actorId: model.me.id })] },
-      GotPage: ({ _tag: _, ...slice }) => ({ model: keepDb(model, keepConfirm(keepHistory(keepComposer({ ...model, ...slice })))) }),
+      GotPage: ({ _tag: _, ...slice }) => ({
+        model: keepDb(model, keepConfirm(keepHistory(keepComposer({ ...model, ...slice })))),
+        // Entries arriving while the Inbox is open are read there.
+        ...(model.view === 'inbox' && unreadCount(slice.inbox, slice.me.inboxSeenAt ?? 0) > 0 ? { commands: [MarkInboxSeen({ memberId: model.me.id })] } : {}),
+      }),
       ChangedConnection: ({ isConnected }) => ({ model: { ...model, isConnected } }),
       ChangedViewers: ({ viewers }) => ({ model: { ...model, viewers } }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
@@ -2210,6 +2227,29 @@ const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => 
     : box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('read-only', page.id)], children: [...renderDocument(page.content, context(props), h)] }, h)
 }
 
+const inboxHeadline = (entry: InboxEntry): string =>
+  entry.kind === 'Reply' ? `${entry.actor ?? 'Someone'} replied in ${entry.pageTitle}` : `Mentioned in ${entry.pageTitle}`
+
+/** Mentions of the person and replies in their discussions, newest first; unread ones get a dot. */
+const inboxView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  box({ as: 'section', class: 'mx-auto w-full max-w-[708px] px-6 pt-16', attributes: [h.Id('inbox')], children: [
+      box({ as: 'h1', class: 'mb-4 text-[32px] font-bold', children: ['Inbox'] }, h),
+      ...(model.inbox.length === 0
+        ? [box({ as: 'p', class: 'text-muted-foreground', attributes: [h.Id('inbox-empty')], children: ['No mentions or replies yet. When someone @-mentions you or replies in a discussion you joined, it shows up here.'] }, h)]
+        : model.inbox.map(entry => {
+            const isUnread = entry.at > model.inboxSeenBefore
+            return box({ as: 'a', class: 'flex items-start gap-2 rounded-md px-2 py-2 hover:bg-accent', attributes: [h.Href(`/p/${entry.pageId}`), h.DataAttribute('inbox-entry', entry.id), ...(isUnread ? [h.DataAttribute('unread', '')] : [])], children: [
+                box({ as: 'span', class: cn('mt-2 size-1.5 shrink-0 rounded-full', isUnread ? 'bg-primary' : 'bg-transparent'), children: [] }, h),
+                pageIcon(entry.pageIcon, h),
+                box({ class: 'flex min-w-0 flex-1 flex-col gap-0.5', children: [
+                    box({ as: 'span', class: 'min-w-0 truncate text-[14px]', children: [inboxHeadline(entry)] }, h),
+                    box({ as: 'span', class: 'min-w-0 truncate text-[13px] text-muted-foreground', attributes: [h.DataAttribute('inbox-text', '')], children: [entry.text] }, h),
+                  ] }, h),
+                box({ as: 'span', class: 'shrink-0 text-[12px] text-muted-foreground', children: [formatAgo(entry.at, model.now)] }, h),
+              ] }, h)
+          })),
+    ] }, h)
+
 const trashView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const shown = trashMatches(model.trash, model.trashQuery)
   return box({ as: 'section', class: 'mx-auto w-full max-w-[708px] px-6 pt-16', attributes: [h.Id('trash')], children: [
@@ -2256,7 +2296,7 @@ const confirmDeleteView = (model: Model, pageId: string, h: HtmlBuilder<Message>
 }
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: `${model.view === 'trash' ? 'Trash' : model.page === null ? 'hypernotes' : titleOf(model.page)} · hypernotes`,
+  title: `${model.view === 'trash' ? 'Trash' : model.view === 'inbox' ? 'Inbox' : model.page === null ? 'hypernotes' : titleOf(model.page)} · hypernotes`,
   body: pageRoot({ isDark: model.me.isDark, theme: model.me.theme, children: [
       // Ctrl+K inside the editor makes a link (the editor takes it first), so search also has Ctrl+P.
       keyBindings(h, [
@@ -2270,12 +2310,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       ]),
       region(h, {
         id: 'sidebar',
-        deps: [model.me, model.nav, model.navDrag, model.pageId, model.view],
+        deps: [model.me, model.nav, model.navDrag, model.pageId, model.view, model.inbox],
         render: () => sidebar({
           me: model.me,
           activeId: model.pageId,
-          active: model.view === 'trash' ? '/?trash=1' : '',
+          active: model.view === 'trash' ? '/?trash=1' : model.view === 'inbox' ? '/?inbox=1' : '',
           nav: model.nav,
+          inboxUnread: unreadCount(model.inbox, model.me.inboxSeenAt ?? 0),
           drag: model.navDrag,
           actions: {
             onToggle: (pageId, isOpen) => Message.ClickedToggle({ pageId, isOpen }),
@@ -2299,7 +2340,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           region(h, { id: 'topbar', deps: [model.viewers, model.me.id, model.me.isSidebarCollapsed === true, model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
           ...(model.page !== null && model.isInTrash ? [trashBanner(model.page, h)] : []),
           box({ class: 'min-h-0 flex-1 overflow-y-auto', attributes: [h.DataAttribute('keep-scroll', 'page')], children: [
-              model.view === 'trash'
+              model.view === 'inbox'
+                ? region(h, { id: 'inbox', deps: [model.inbox, model.inboxSeenBefore, model.now], render: () => inboxView(model, h) })
+                : model.view === 'trash'
                 ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
@@ -2347,11 +2390,13 @@ export const program: Program<Model, Message, ClientMessage, Flags, Workspace | 
     Effect.gen(function* () {
       const me = yield* requireMember(request)
       const state = yield* Workspace.use(workspace => workspace.current)
-      const isTrash = new URL(request.url, 'http://localhost').searchParams.get('trash') === '1'
-      const pageId = isTrash ? null : (request.params['id'] ?? firstPage(state, me.id))
+      const params = new URL(request.url, 'http://localhost').searchParams
+      const isTrash = params.get('trash') === '1'
+      const isInbox = !isTrash && params.get('inbox') === '1'
+      const pageId = isTrash || isInbox ? null : (request.params['id'] ?? firstPage(state, me.id))
       const now = yield* Effect.clockWith(clock => clock.currentTimeMillis)
       const { me: _, ...slice } = sliceOf(state, pageId, me.id, now)
-      return { me, view: isTrash ? 'trash' : pageId === null ? 'empty' : 'page', pageId, ...slice }
+      return { me, view: isTrash ? 'trash' : isInbox ? 'inbox' : pageId === null ? 'empty' : 'page', pageId, ...slice }
     }),
   init,
   update,

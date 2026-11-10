@@ -351,6 +351,13 @@ try {
   await morgan.page.keyboard.press('Enter')
   check('a reply keeps its Shift+Enter line break and joins the discussion', await until(avery.page, id =>
     [...(document.querySelector(`[data-thread="${id}"]`)?.querySelectorAll('[data-comment-text]') ?? [])].map(node => node.textContent).join('|') === 'Can we add a reading list?|Sure, line one\nline two', threadId))
+  check('a reply shows as unread next to Inbox for the discussion starter', await until(avery.page, () => Number(document.querySelector('#sidebar-inbox [data-unread-count]')?.getAttribute('data-unread-count')) >= 1))
+  await visit(avery.page, '/?inbox=1')
+  check('the Inbox lists the reply, unread, and opening it clears the count', await until(avery.page, () =>
+    [...document.querySelectorAll('[data-inbox-entry][data-unread]')].some(node => node.textContent.includes('Morgan Vale replied in') && node.textContent.includes('Sure, line one'))
+      && document.querySelector('#sidebar-inbox [data-unread-count]') === null))
+  await avery.page.locator('[data-inbox-entry][data-unread]').first().click()
+  check('an Inbox entry opens its page', await until(avery.page, () => location.pathname === '/p/demo-onboarding' && document.querySelector('#page-comments [data-thread]') !== null))
   check('only the author may edit or delete', await until(morgan.page, id => document.querySelector(`#edit-${id}`) === null && document.querySelector(`#resolve-${id}`) !== null, threadId))
   await avery.page.hover(`[data-comment="${threadId}"]`)
   await avery.page.locator(`#edit-${threadId}`).click()
