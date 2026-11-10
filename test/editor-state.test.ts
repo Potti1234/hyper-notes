@@ -198,3 +198,41 @@ describe('editor: blocks, menus and history', () => {
     assert.strictEqual(empty.selection._tag, 'TextSelection')
   })
 })
+
+describe('editor: @ mentions and : emoji', () => {
+  const PLAIN = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null } as const
+
+  it('"@" after a space opens the mention menu, which follows the query and closes when the "@" goes', () => {
+    const opened = type(at([B.paragraph('a')], 'a', 0), 'Hi @mor')
+    assert.deepStrictEqual(opened.menu, { _tag: 'InlineMenu', trigger: '@', blockId: 'a', from: 3, query: 'mor', active: 0 })
+    const back = run(opened, { _tag: 'DeleteBackward', unit: 'word' })
+    assert.strictEqual(back.menu._tag, 'InlineMenu')
+    assert.strictEqual(run(back, { _tag: 'DeleteBackward', unit: 'char' }).menu._tag, 'NoMenu')
+    assert.strictEqual(type(at([B.paragraph('a')], 'a', 0), 'me@x').menu._tag, 'NoMenu')
+  })
+
+  it('choosing a person puts a mention and a space in place of "@query"', () => {
+    const chosen = run(type(at([B.paragraph('a')], 'a', 0), 'Hi @mor'), { _tag: 'ChooseInline', piece: { _tag: 'PersonMention', memberId: 'morgan', marks: PLAIN } })
+    const text = B.find(chosen.doc, 'a')!.text
+    assert.deepStrictEqual(text.map(piece => piece._tag), ['Text', 'PersonMention', 'Text'])
+    assert.strictEqual(caretText(text), 'Hi \uFFFC ')
+    assert.deepStrictEqual(chosen.selection, caret('a', 5))
+    assert.strictEqual(chosen.menu._tag, 'NoMenu')
+    assert.strictEqual(caretText(B.find(run(chosen, { _tag: 'Undo' }).doc, 'a')!.text), 'Hi @mor')
+  })
+
+  it('":" and a letter opens the emoji menu; a space or a bare ":" does not', () => {
+    const opened = type(at([B.paragraph('a')], 'a', 0), 'Go :roc')
+    assert.deepStrictEqual(opened.menu, { _tag: 'InlineMenu', trigger: ':', blockId: 'a', from: 3, query: 'roc', active: 0 })
+    assert.strictEqual(type(opened, ' ').menu._tag, 'NoMenu')
+    assert.strictEqual(type(at([B.paragraph('a')], 'a', 0), 'Time: 10').menu._tag, 'NoMenu')
+    assert.strictEqual(type(at([B.paragraph('a')], 'a', 0), '10:30').menu._tag, 'NoMenu')
+    const chosen = run(opened, { _tag: 'ChooseInline', piece: { _tag: 'Text', text: 'R', marks: PLAIN } })
+    assert.strictEqual(textOf(chosen, 'a'), 'Go R')
+  })
+
+  it('no menus open inside code', () => {
+    const code = { ...initial([B.block('c', { _tag: 'Code', language: 'ts', isWrapped: false }, [])], 'n'), selection: caret('c', 0) }
+    assert.strictEqual(type(code, 'a @b :c /d').menu._tag, 'NoMenu')
+  })
+})

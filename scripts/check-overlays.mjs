@@ -5,7 +5,8 @@ import { chromium } from 'playwright'
 
    At each window size it opens the page menu of the sidebar rows nearest the
    top and bottom of the window, the search palette, and in the editor the
-   slash menu, the block menu, the color menu and the inline toolbar, on a
+   slash, mention and emoji menus, the block menu, the color menu and the
+   inline toolbar, on a
    block near the top and one near the bottom of the window. The panel that
    opens must lie inside the window.
 
@@ -117,6 +118,15 @@ try {
       await page.keyboard.type(' /')
       await measure(page, '[data-overlay="nb-slash-menu"]', `${where}: the slash menu`)
       await closeWithEscape(page, '[data-overlay="nb-slash-menu"]')
+      await page.keyboard.press('Backspace')
+      await page.keyboard.type('@')
+      await measure(page, '[data-overlay="nb-mention-menu"]', `${where}: the mention menu`)
+      await closeWithEscape(page, '[data-overlay="nb-mention-menu"]')
+      await page.keyboard.press('Backspace')
+      await page.keyboard.type(':s')
+      await measure(page, '[data-overlay="nb-emoji-menu"]', `${where}: the emoji menu`)
+      await closeWithEscape(page, '[data-overlay="nb-emoji-menu"]')
+      await page.keyboard.press('Backspace')
       await page.keyboard.press('Backspace')
       await page.keyboard.press('Backspace')
       await page.keyboard.press('Shift+Home')

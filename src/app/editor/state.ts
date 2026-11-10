@@ -1,7 +1,7 @@
 import { Schema as S } from 'effect'
 
 import * as B from './blocks'
-import { type Block, type Color, Document, type Kind, type KindTag, Marks, type RichText, type ToggleMark, hasText } from './schema'
+import { type Block, type Color, Document, type Inline, type Kind, type KindTag, Marks, type RichText, type ToggleMark, hasText } from './schema'
 import * as T from './text'
 
 /* The editor as a pure state machine: a document, a selection, the open
@@ -25,7 +25,10 @@ export type Selection = typeof Selection.Type
 export const NoMenu = S.TaggedStruct('NoMenu', {})
 /** The `/` menu: typed after `/` at `from` filters it. */
 export const SlashMenu = S.TaggedStruct('SlashMenu', { blockId: S.String, from: S.Number, query: S.String, active: S.Number })
-export const Menu = S.Union([NoMenu, SlashMenu])
+/** `@` (people, pages, dates) or `:` and a letter (emoji): typed after the trigger at `from` filters it. */
+export const InlineMenu = S.TaggedStruct('InlineMenu', { trigger: S.Literals(['@', ':']), blockId: S.String, from: S.Number, query: S.String, active: S.Number })
+export type InlineMenu = typeof InlineMenu.Type
+export const Menu = S.Union([NoMenu, SlashMenu, InlineMenu])
 export type Menu = typeof Menu.Type
 
 const Snapshot = S.Struct({ doc: Document, selection: Selection })
@@ -88,6 +91,7 @@ export type Action =
   | Readonly<{ _tag: 'PasteText'; text: string }>
   | Readonly<{ _tag: 'MoveSlash'; active: number }>
   | Readonly<{ _tag: 'ChooseSlash'; tag: KindTag; level: 1 | 2 | 3 }>
+  | Readonly<{ _tag: 'ChooseInline'; piece: Inline }>
   | Readonly<{ _tag: 'CloseMenu' }>
   | Readonly<{ _tag: 'Undo' }>
   | Readonly<{ _tag: 'Redo' }>
@@ -285,20 +289,27 @@ const insertText = (state: EditorState, value: string): EditorState => {
     const inline = inlineShortcut(text, offset)
     if (inline !== null) [text, offset, typingMarks] = inline
   }
-  if (value === '/' && kind._tag !== 'Code') {
-    const previous = point.offset === 0 ? ' ' : (T.caretText(target.text)[point.offset - 1] ?? ' ')
-    if (/\s/.test(previous)) menu = { _tag: 'SlashMenu', blockId: target.id, from: point.offset, query: '', active: 0 }
-  } else if (menu._tag === 'SlashMenu') menu = slashAfter(menu, target.id, text, offset)
+  const previous = point.offset === 0 ? ' ' : (T.caretText(target.text)[point.offset - 1] ?? ' ')
+  const isOpening = menu._tag === 'NoMenu' && kind._tag !== 'Code' && !marks.code
+  if (isOpening && value === '/' && /\s/.test(previous)) menu = { _tag: 'SlashMenu', blockId: target.id, from: point.offset, query: '', active: 0 }
+  else if (isOpening && value === '@' && /\s/.test(previous)) menu = { _tag: 'InlineMenu', trigger: '@', blockId: target.id, from: point.offset, query: '', active: 0 }
+  else if (isOpening && /^[a-z0-9]$/i.test(value) && previous === ':' && /\s/.test(point.offset < 2 ? ' ' : (T.caretText(target.text)[point.offset - 2] ?? ' '))) {
+    menu = { _tag: 'InlineMenu', trigger: ':', blockId: target.id, from: point.offset - 1, query: value, active: 0 }
+  } else if (menu._tag !== 'NoMenu') menu = menuAfter(menu, target.id, text, offset)
   const next: EditorState = { ...state, doc: B.update(doc, target.id, entry => ({ ...entry, kind, text })), selection: caret(target.id, offset), typingMarks, menu }
   return withHistory(state, next, kind === target.kind && deleted === null ? 'typing' : 'none')
 }
 
-/** The slash menu follows what is typed after `/`; it closes when the `/` goes, the caret leaves or nothing matches for long. */
-const slashAfter = (menu: Extract<Menu, { _tag: 'SlashMenu' }>, blockId: string, text: RichText, offset: number): Menu => {
+type OpenMenu = Exclude<Menu, { _tag: 'NoMenu' }>
+const triggerOf = (menu: OpenMenu): string => (menu._tag === 'SlashMenu' ? '/' : menu.trigger)
+
+/** A menu follows what is typed after its trigger; it closes when the trigger goes, the caret leaves or the query runs on (emoji: at a space). */
+const menuAfter = (menu: OpenMenu, blockId: string, text: RichText, offset: number): Menu => {
   const plain = T.caretText(text)
-  if (blockId !== menu.blockId || offset <= menu.from || plain[menu.from] !== '/') return { _tag: 'NoMenu' }
+  if (blockId !== menu.blockId || offset <= menu.from || plain[menu.from] !== triggerOf(menu)) return { _tag: 'NoMenu' }
   const query = plain.slice(menu.from + 1, offset)
-  return query.length > 24 || /\s\s/.test(query) ? { _tag: 'NoMenu' } : { ...menu, query, active: query === menu.query ? menu.active : 0 }
+  const isOver = query.length > 24 || /\s\s/.test(query) || /^\s/.test(query) || (triggerOf(menu) === ':' && (query === '' || /\s/.test(query)))
+  return isOver ? { _tag: 'NoMenu' } : { ...menu, query, active: query === menu.query ? menu.active : 0 }
 }
 
 const removeBlocks = (state: EditorState, blockIds: ReadonlyArray<string>): EditorState => {
@@ -333,7 +344,7 @@ const deleteBackward = (state: EditorState, unit: Unit): EditorState => {
     const plain = T.caretText(target.text)
     const from = unit === 'line' ? 0 : unit === 'word' ? T.wordStartBefore(plain, point.offset) : T.charBefore(plain, point.offset)
     const text = T.remove(target.text, from, point.offset)
-    const menu = state.menu._tag === 'SlashMenu' ? slashAfter(state.menu, target.id, text, from) : state.menu
+    const menu = state.menu._tag === 'NoMenu' ? state.menu : menuAfter(state.menu, target.id, text, from)
     return withHistory(state, { ...state, doc: B.update(state.doc, target.id, entry => ({ ...entry, text })), selection: caret(target.id, from), menu, typingMarks: null }, 'deleting')
   }
   // At the start: a list item, heading or quote turns into text first, then nested text moves out, then it joins the block above.
@@ -474,7 +485,7 @@ const insertBlocks = (state: EditorState, blocks: ReadonlyArray<Block>): EditorS
 export const apply = (state: EditorState, action: Action): EditorState => {
   switch (action._tag) {
     case 'Select': {
-      const menu = state.menu._tag === 'SlashMenu' && (action.selection._tag !== 'TextSelection' || action.selection.focus.blockId !== state.menu.blockId || action.selection.focus.offset <= state.menu.from) ? { _tag: 'NoMenu' as const } : state.menu
+      const menu = state.menu._tag !== 'NoMenu' && (action.selection._tag !== 'TextSelection' || action.selection.focus.blockId !== state.menu.blockId || action.selection.focus.offset <= state.menu.from) ? { _tag: 'NoMenu' as const } : state.menu
       return { ...state, selection: action.selection, typingMarks: null, lastEdit: 'none', menu }
     }
     case 'InsertText': return action.text === '' ? state : insertText(state, action.text)
@@ -572,7 +583,19 @@ export const apply = (state: EditorState, action: Action): EditorState => {
       const blocks = parseLines(action.text, id.next)
       return insertBlocks({ ...state, idCount: id.count() }, blocks)
     }
-    case 'MoveSlash': return state.menu._tag === 'SlashMenu' ? { ...state, menu: { ...state.menu, active: Math.max(0, action.active) } } : state
+    case 'MoveSlash': return state.menu._tag === 'NoMenu' ? state : { ...state, menu: { ...state.menu, active: Math.max(0, action.active) } }
+    case 'ChooseInline': {
+      // The trigger and query become the mention (and a space after it, like Notion) or the emoji.
+      if (state.menu._tag !== 'InlineMenu') return state
+      const { blockId, from, query } = state.menu
+      const target = B.find(state.doc, blockId)
+      if (target === null) return { ...state, menu: { _tag: 'NoMenu' } }
+      const marks = T.marksAt(target.text, from)
+      const pieces: RichText = action.piece._tag === 'Text' ? T.plain(action.piece.text, marks) : [{ ...action.piece, marks }, ...T.plain(' ', marks)]
+      const text = T.insert(T.remove(target.text, from, from + 1 + query.length), from, pieces)
+      const offset = from + T.lengthOf(pieces)
+      return withHistory(state, { ...state, doc: B.update(state.doc, blockId, entry => ({ ...entry, text })), menu: { _tag: 'NoMenu' }, selection: caret(blockId, offset), typingMarks: null }, 'none')
+    }
     case 'ChooseSlash': {
       if (state.menu._tag !== 'SlashMenu') return state
       const { blockId, from, query } = state.menu

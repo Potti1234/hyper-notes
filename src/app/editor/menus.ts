@@ -1,5 +1,9 @@
-import type { Color, KindTag } from './schema'
-import { COLOR_NAMES } from './schema'
+import { EMOJI } from '../emoji'
+import type { MemberRef, PageRef } from './island'
+import { addDays, formatDate } from './render'
+import type { Color, Inline, KindTag } from './schema'
+import { COLOR_NAMES, isIsoDate } from './schema'
+import type { InlineMenu } from './state'
 
 /* The editor's menus as data: the `/` menu's blocks and the block menu's
    actions, with Notion's names, groups and search words. */
@@ -76,4 +80,31 @@ export const blockMenuItems = (query: string): ReadonlyArray<BlockMenuItem> => {
     ...[...TEXT_COLORS, ...BACKGROUND_COLORS].map(color => ({ _tag: 'Color' as const, label: colorLabel(color), shortcut: '' as const, color })),
   ]
   return all.filter(entry => matches(query, [entry.label]))
+}
+
+// INLINE MENUS
+
+export type InlineSources = Readonly<{ members: ReadonlyArray<MemberRef>; pages: ReadonlyArray<PageRef>; today: string }>
+
+export type InlineItem = Readonly<{ group: string; label: string; hint: string; piece: Inline }>
+
+const PLAIN_MARKS = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null } as const
+
+const DATE_WORDS: ReadonlyArray<readonly [label: string, days: number]> = [['Today', 0], ['Tomorrow', 1], ['Yesterday', -1]]
+
+/** What `@` or `:` offers for the query: people, pages and dates (Notion's order), or emoji. */
+export const inlineMenuItems = (menu: InlineMenu, sources: InlineSources): ReadonlyArray<InlineItem> => {
+  const needle = menu.query.trim().toLowerCase()
+  const has = (words: string) => words.toLowerCase().includes(needle)
+  if (menu.trigger === ':') {
+    return EMOJI.filter(entry => entry.name.split(' ').some(word => word.startsWith(needle))).slice(0, 8)
+      .map(entry => ({ group: 'Emoji', label: `${entry.char} ${entry.name.split(' ')[0] ?? ''}`, hint: '', piece: { _tag: 'Text', text: entry.char, marks: PLAIN_MARKS } }))
+  }
+  const typed = isIsoDate(needle) && addDays(needle, 0) === needle ? [needle] : []
+  return [
+    ...sources.members.filter(member => has(member.name)).slice(0, 4).map(member => ({ group: 'People', label: member.name, hint: '', piece: { _tag: 'PersonMention' as const, memberId: member.id, marks: PLAIN_MARKS } })),
+    ...sources.pages.filter(page => has(page.title || 'Untitled')).slice(0, 6).map(page => ({ group: 'Link to page', label: `${page.icon} ${page.title || 'Untitled'}`.trim(), hint: '', piece: { _tag: 'PageMention' as const, pageId: page.id, marks: PLAIN_MARKS } })),
+    ...[...DATE_WORDS.filter(([label]) => has(label)).map(([label, days]) => [label, addDays(sources.today, days)] as const), ...typed.map(date => [formatDate(date), date] as const)]
+      .map(([label, date]) => ({ group: 'Date', label, hint: formatDate(date), piece: { _tag: 'DateMention' as const, date, marks: PLAIN_MARKS } })),
+  ]
 }

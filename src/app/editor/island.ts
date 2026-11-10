@@ -23,6 +23,8 @@ export const EditorProps = S.Struct({
   pages: S.Array(PageRef),
   members: S.Array(MemberRef),
   crumbs: S.Array(PageRef),
+  /** The day `@today` means, YYYY-MM-DD (the page's clock, so the editor stays pure). */
+  today: S.String,
 })
 export type EditorProps = typeof EditorProps.Type
 

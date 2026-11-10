@@ -47,6 +47,9 @@ export const Text = S.TaggedStruct('Text', { text: S.String, marks: Marks })
 export const PageMention = S.TaggedStruct('PageMention', { pageId: S.String, marks: Marks })
 export const PersonMention = S.TaggedStruct('PersonMention', { memberId: S.String, marks: Marks })
 /** A date as YYYY-MM-DD. */
+/** YYYY-MM-DD, the form a date mention keeps. */
+export const isIsoDate = (text: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(text)
+
 export const DateMention = S.TaggedStruct('DateMention', { date: S.String.pipe(S.check(S.isPattern(/^\d{4}-\d{2}-\d{2}$/))), marks: Marks })
 export const InlineEquation = S.TaggedStruct('InlineEquation', { tex: S.String.pipe(S.check(S.isMaxLength(2000))), marks: Marks })
 

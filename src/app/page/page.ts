@@ -15,7 +15,7 @@ import { input } from '@/ui/input'
 import { requireMember } from '../auth'
 import { EMOJI, isEmoji, pickEmoji } from '../emoji'
 import { Member, Page, Section, formatAgo, titleOf } from '../domain'
-import { EditorEvent, PageEditor } from '../editor/island'
+import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import { Workspace, type WorkspaceState } from '../store'
@@ -60,6 +60,8 @@ export const Model = S.Struct({
   isInTrash: S.Boolean,
   nav: Nav,
   pages: S.Array(PageEntry),
+  /** Who `@` can mention. */
+  people: S.Array(MemberRef),
   trash: S.Array(TrashEntry),
   now: S.Number,
   picker: S.NullOr(Picker),
@@ -108,6 +110,7 @@ export const Message = defineMessageUnion({
     isInTrash: S.Boolean,
     nav: Nav,
     pages: S.Array(PageEntry),
+    people: S.Array(MemberRef),
     trash: S.Array(TrashEntry),
     now: S.Number,
   },
@@ -280,6 +283,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     isInTrash: page !== null && isTrashed(state.pages, page),
     nav: navOf(state, memberId),
     pages: visible.filter(entry => !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, path: pathOf(state, entry), section: entry.section })),
+    people: state.members.map(member => ({ id: member.id, name: member.name })),
     trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, path: pathOf(state, entry) })),
     now,
   }
@@ -287,7 +291,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.pages, a.trash]) === JSON.stringify([b.crumbs, b.pages, b.trash])
+  JSON.stringify([a.crumbs, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.pages, b.people, b.trash])
 
 // INIT
 
@@ -611,7 +615,7 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
 /** The page's blocks: the editor island, or read-only when locked or in Trash. */
 const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
   const isEditable = !model.isInTrash && !page.isLocked
-  const props = { pageId: page.id, content: page.content, revision: page.updatedAt, isEditable, pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: [], crumbs: model.crumbs }
+  const props = { pageId: page.id, content: page.content, revision: page.updatedAt, isEditable, pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: model.people, crumbs: model.crumbs, today: new Date(model.now).toISOString().slice(0, 10) }
   return isEditable
     ? Island.view(PageEditor, { id: `editor-${page.id}`, props, onEvent: event => Message.GotEditorEvent({ event }) }, h)
     : box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('read-only', page.id)], children: [...renderDocument(page.content, context(props), h)] }, h)

@@ -9,10 +9,10 @@ import * as B from './blocks'
 import { blockAt, readSelection, writeSelection } from './dom.client'
 import { EditorEvent, EditorProps, MemberRef, PageRef } from './island'
 import { keyResult } from './keys'
-import { BACKGROUND_COLORS, type BlockMenuItem, TEXT_COLORS, blockMenuItems, slashItems } from './menus'
+import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, inlineMenuItems, slashItems } from './menus'
 import { ANCHOR, colorClass, context, renderDocument } from './render'
 import { type Block, type Color, Document, type ToggleMark, hasText } from './schema'
-import { type Action, EditorState, Selection, apply, caret, initial, isCollapsed, ordered, targetIds } from './state'
+import { type Action, EditorState, type InlineMenu, Selection, apply, caret, initial, isCollapsed, ordered, targetIds } from './state'
 import * as T from './text'
 import { anchoredStyle } from '@/lib/anchored'
 
@@ -40,6 +40,7 @@ export const Model = S.Struct({
   pages: S.Array(PageRef),
   members: S.Array(MemberRef),
   crumbs: S.Array(PageRef),
+  today: S.String,
   editor: EditorState,
   /** The content last sent or received: the editor has unsaved edits when its doc differs. */
   saved: Document,
@@ -198,8 +199,18 @@ const wrap = (index: number, length: number): number => (length === 0 ? 0 : ((in
 const visiblePages = (model: Model, query: string): ReadonlyArray<PageRef> =>
   model.pages.filter(page => page.id !== model.pageId && (page.title || 'Untitled').toLowerCase().includes(query.trim().toLowerCase())).slice(0, 8)
 
+const inlineItems = (model: Model, menu: InlineMenu): ReadonlyArray<InlineItem> => inlineMenuItems(menu, model)
+
+const chooseInline = (model: Model, index: number): Update.Return<Model, Message> => {
+  const menu = model.editor.menu
+  if (menu._tag !== 'InlineMenu') return { model }
+  const chosen = inlineItems(model, menu)[index]
+  return chosen === undefined ? act(model, { _tag: 'CloseMenu' }) : act(model, { _tag: 'ChooseInline', piece: chosen.piece })
+}
+
 const chooseSlash = (model: Model, index: number): Update.Return<Model, Message> => {
   const menu = model.editor.menu
+  if (menu._tag === 'InlineMenu') return chooseInline(model, index)
   if (menu._tag !== 'SlashMenu') return { model }
   const chosen = slashItems(menu.query)[index]
   if (chosen === undefined) return act(model, { _tag: 'CloseMenu' })
@@ -266,7 +277,8 @@ const menuLength = (model: Model): number => {
   if (overlay._tag === 'BlockMenu') return blockMenuItems(overlay.query).length
   if (overlay._tag === 'ColorMenu') return COLORS.length
   if (overlay._tag === 'Prompt' && overlay.field === 'page') return visiblePages(model, overlay.value).length
-  return model.editor.menu._tag === 'SlashMenu' ? slashItems(model.editor.menu.query).length : 0
+  const menu = model.editor.menu
+  return menu._tag === 'SlashMenu' ? slashItems(menu.query).length : menu._tag === 'InlineMenu' ? inlineItems(model, menu).length : 0
 }
 
 const pressMenuKey = (model: Model, key: 'up' | 'down' | 'enter' | 'escape' | 'backspace'): Update.Return<Model, Message> => {
@@ -275,8 +287,10 @@ const pressMenuKey = (model: Model, key: 'up' | 'down' | 'enter' | 'escape' | 'b
   const step = key === 'up' ? -1 : 1
   if (overlay._tag === 'Closed') {
     const menu = model.editor.menu
-    if (menu._tag !== 'SlashMenu') return { model }
+    if (menu._tag === 'NoMenu') return { model }
     if (key === 'escape') return act(model, { _tag: 'CloseMenu' })
+    // With nothing to choose, Enter is Enter again.
+    if (key === 'enter' && menu._tag === 'InlineMenu' && menuLength(model) === 0) return actAll(model, [{ _tag: 'CloseMenu' }, { _tag: 'Enter' }])
     if (key === 'enter') return chooseSlash(model, menu.active)
     return act(model, { _tag: 'MoveSlash', active: wrap(menu.active + step, menuLength(model)) })
   }
@@ -323,7 +337,7 @@ const TOOL_MARKS: Readonly<Record<string, ToggleMark>> = { bold: 'bold', italic:
 export const init = (props: EditorProps): Update.Return<Model, Message> => {
   const editor = initial(props.content, `${props.pageId.slice(-6)}-${Math.floor(props.revision % 1e6).toString(36)}-`)
   const model: Model = {
-      pageId: props.pageId, revision: props.revision, isEditable: props.isEditable, pages: props.pages, members: props.members, crumbs: props.crumbs,
+      pageId: props.pageId, revision: props.revision, isEditable: props.isEditable, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today,
       editor, saved: editor.doc, saveSeq: 0, overlay: { _tag: 'Closed' }, isComposing: false, epoch: 0,
   }
   return { model, commands: [Sync({ model, isAfterInput: false })] }
@@ -337,7 +351,7 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
     M.tagsExhaustive({
       ReceivedProps: ({ props }) => {
         if (props.pageId !== model.pageId) return { model }
-        const base: Model = { ...model, pages: props.pages, members: props.members, crumbs: props.crumbs, isEditable: props.isEditable, revision: Math.max(model.revision, props.revision) }
+        const base: Model = { ...model, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today, isEditable: props.isEditable, revision: Math.max(model.revision, props.revision) }
         const hasPending = model.editor.doc !== model.saved
         if (props.revision <= model.revision || hasPending || JSON.stringify(props.content) === JSON.stringify(model.editor.doc)) return { model: base }
         const editor = apply(model.editor, { _tag: 'ReplaceDocument', doc: props.content })
@@ -352,7 +366,7 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
         : { model },
       HoveredMenuItem: ({ index }) =>
         model.overlay._tag === 'BlockMenu' || model.overlay._tag === 'ColorMenu' || model.overlay._tag === 'Prompt' ? { model: { ...model, overlay: { ...model.overlay, active: index } } }
-        : model.editor.menu._tag === 'SlashMenu' ? act(model, { _tag: 'MoveSlash', active: index })
+        : model.editor.menu._tag !== 'NoMenu' ? act(model, { _tag: 'MoveSlash', active: index })
         : { model },
       ChoseMenuItem: ({ index }) => chooseMenuItem(model, index),
       OpenedLink: () => {
@@ -561,7 +575,7 @@ const EditPage = Mount.defineStream('EditPage', {
             const result = keyResult(
               { key: key.key, mod: key.ctrlKey || key.metaKey, shift: key.shiftKey, alt: key.altKey },
               {
-                menu: model.overlay._tag === 'BlockMenu' || model.overlay._tag === 'ColorMenu' ? 'block' : model.overlay._tag === 'Prompt' ? 'link' : editorState.menu._tag === 'SlashMenu' ? 'slash' : 'none',
+                menu: model.overlay._tag === 'BlockMenu' || model.overlay._tag === 'ColorMenu' ? 'block' : model.overlay._tag === 'Prompt' ? 'link' : editorState.menu._tag !== 'NoMenu' ? 'slash' : 'none',
                 selection: editorState.selection._tag,
                 isCollapsed: isCollapsed(editorState.selection),
               },
@@ -766,6 +780,16 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
       ...items.flatMap((entry, index) => (entry.group === group ? [menuRow(h, index, active, entry.label, entry.shortcut, entry.description)] : [])),
     ]))]
   }
+  if (editor.menu._tag === 'InlineMenu') {
+    const items = inlineItems(model, editor.menu)
+    const active = editor.menu.active
+    const groups = [...new Set(items.map(entry => entry.group))]
+    const body = items.length === 0 ? [h.div([h.Class('nb-menu-empty')], ['No results'])] : groups.flatMap(group => [
+      h.div([h.Class('nb-menu-heading')], [group]),
+      ...items.flatMap((entry, index) => (entry.group === group ? [menuRow(h, index, active, entry.label, entry.hint)] : [])),
+    ])
+    return [editor.menu.trigger === '@' ? panel(h, 'nb-mention-menu', body) : panel(h, 'nb-emoji-menu', body)]
+  }
   const { selection } = editor
   if (model.isEditable && selection._tag === 'TextSelection' && !isCollapsed(selection)) {
     const tool = (name: string, label: string, isOn = false): Html => h.span([h.Class(['nb-tool', TOOL_CLASS[name] ?? '', isOn ? 'nb-on' : ''].join(' ')), h.Attribute('data-tool', name), h.Attribute('role', 'button'), h.Attribute('aria-label', label)], [label])
@@ -784,7 +808,7 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
 const anchorOf = (model: Model): string | null => {
   const { overlay, editor } = model
   if (overlay._tag === 'BlockMenu' || overlay._tag === 'Prompt') return overlay.blockId
-  if (editor.menu._tag === 'SlashMenu') return editor.menu.blockId
+  if (editor.menu._tag !== 'NoMenu') return editor.menu.blockId
   if (editor.selection._tag === 'TextSelection') return ordered(editor.doc, editor.selection)[0].blockId
   return null
 }

@@ -58,6 +58,20 @@ const TOC_CLASS = { 1: 'nb-toc-item nb-toc-1', 2: 'nb-toc-item nb-toc-2', 3: 'nb
 const markClass = (marks: Marks): string =>
   [marks.bold ? 'nb-b' : '', marks.italic ? 'nb-i' : '', marks.underline ? 'nb-u' : '', marks.strike ? 'nb-s' : '', marks.code ? 'nb-c' : '', colorClass(marks.color)].filter(name => name !== '').join(' ')
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+/** `2026-11-10` as Notion writes it: November 10, 2026. */
+export const formatDate = (date: string): string => {
+  const [year, month, day] = date.split('-').map(Number)
+  return `${MONTHS[(month ?? 1) - 1] ?? ''} ${day ?? 1}, ${year ?? 0}`
+}
+
+/** The day `days` after `date` (both YYYY-MM-DD). */
+export const addDays = (date: string, days: number): string => {
+  const [year, month, day] = date.split('-').map(Number)
+  return new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) + days)).toISOString().slice(0, 10)
+}
+
 const atom = <Msg>(h: HtmlBuilder<Msg>, marks: Marks, kind: string, attributes: ReadonlyArray<ReturnType<HtmlBuilder<Msg>['Attribute']>>, label: string): Html =>
   h.span([h.Class(['nb-atom', `nb-atom-${kind}`, markClass(marks)].join(' ')), h.Attribute('contenteditable', 'false'), h.Attribute('data-atom', kind), ...attributes], [label])
 
@@ -73,7 +87,7 @@ const inline = <Msg>(piece: Inline, ctx: RenderContext, h: HtmlBuilder<Msg>): Ht
       return atom(h, piece.marks, 'page', [h.Attribute('data-page-id', piece.pageId)], `${page?.icon ?? ''} ${page?.title || 'Untitled'}`.trim())
     }
     case 'PersonMention': return atom(h, piece.marks, 'person', [h.Attribute('data-member-id', piece.memberId)], `@${ctx.members.get(piece.memberId)?.name ?? 'Unknown'}`)
-    case 'DateMention': return atom(h, piece.marks, 'date', [h.Attribute('data-date', piece.date)], `@${piece.date}`)
+    case 'DateMention': return atom(h, piece.marks, 'date', [h.Attribute('data-date', piece.date)], `@${formatDate(piece.date)}`)
     case 'InlineEquation': return atom(h, piece.marks, 'equation', [h.Attribute('data-tex', piece.tex)], piece.tex)
   }
 }
