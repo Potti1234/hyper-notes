@@ -26,7 +26,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -109,6 +109,10 @@ export const Model = S.Struct({
   now: S.Number,
   rows: S.Array(RowEntry),
   parentDatabase: S.NullOr(ParentDatabase),
+  /** Databases the open one's relations point to, with their rows. */
+  related: S.Array(RelatedDatabase),
+  /** Every database a relation can point to. */
+  databases: S.Array(LinkedPage),
   db: DatabaseUi,
   picker: S.NullOr(Picker),
   titleDraft: S.NullOr(S.String),
@@ -183,6 +187,8 @@ export const Message = defineMessageUnion({
     trash: S.Array(TrashEntry),
     rows: S.Array(RowEntry),
     parentDatabase: S.NullOr(ParentDatabase),
+    related: S.Array(RelatedDatabase),
+    databases: S.Array(LinkedPage),
     now: S.Number,
   },
   ClickedMakeDatabase: { layout: D.Layout },
@@ -523,11 +529,18 @@ export type Slice = Omit<typeof Message.GotPage.Type, '_tag' | 'me'> & Readonly<
 
 const PREVIEW_LENGTH = 400
 
-export const rowEntryOf = (page: Page): RowEntry => ({
+/** `titles` names the pages its relations link to. */
+export const rowEntryOf = (page: Page, titles: ReadonlyMap<string, string> = new Map()): RowEntry => ({
   id: page.id, title: page.title, icon: page.icon, values: page.values, isLocked: page.isLocked,
   createdAt: page.createdAt, createdBy: page.createdBy, updatedAt: page.updatedAt, updatedBy: page.updatedBy,
   preview: page.content.map(entry => plainText(entry.text).trim()).filter(text => text !== '').join('\n').slice(0, PREVIEW_LENGTH),
+  links: Object.fromEntries(Object.values(page.values).flatMap(value => (value._tag === 'RelationValue' ? value.pageIds : [])).flatMap(id => {
+    const title = titles.get(id)
+    return title === undefined ? [] : [[id, title] as const]
+  })),
 })
+
+const titlesOf = (model: Model): ReadonlyMap<string, string> => new Map(model.pages.map(entry => [entry.id, entry.title]))
 
 const pathOf = (state: WorkspaceState, page: Page): string => ancestorsOf(state.pages, page).map(titleOf).join(' / ')
 
@@ -536,10 +549,25 @@ const parentDatabaseOf = (state: WorkspaceState, page: Page | null): ParentDatab
   return parent?.database == null ? null : { id: parent.id, title: titleOf(parent), database: parent.database }
 }
 
+const relatedOf = (state: WorkspaceState, visible: ReadonlyArray<Page>, source: Readonly<{ id: string; database: D.Database }> | null): ReadonlyArray<RelatedDatabase> => {
+  if (source === null) return []
+  const ids = [...new Set(source.database.properties.flatMap(property => (property.type._tag === 'Relation' ? [property.type.databaseId === '' ? source.id : property.type.databaseId] : [])))]
+  return ids.flatMap(id => {
+    const target = visible.find(entry => entry.id === id)
+    return target?.database == null || isTrashed(state.pages, target) ? [] : [{
+      id,
+      title: titleOf(target),
+      rows: visible.filter(entry => entry.parentId === id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => ({ id: entry.id, title: entry.title, icon: entry.icon })),
+    }]
+  })
+}
+
 export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: string, now: number): Slice => {
   const found = pageId === null ? undefined : state.pages.find(page => page.id === pageId)
   const page = found !== undefined && canSee(found, memberId) ? found : null
   const visible = state.pages.filter(entry => canSee(entry, memberId))
+  const titles = new Map(visible.map(entry => [entry.id, titleOf(entry)]))
+  const parentDatabase = parentDatabaseOf(state, page)
   return {
     me: state.members.find(member => member.id === memberId) ?? null,
     page,
@@ -552,8 +580,10 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     nav: navOf(state, memberId),
     pages: visible.filter(entry => !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, path: pathOf(state, entry), section: entry.section })),
     people: state.members.map(member => ({ id: member.id, name: member.name })),
-    rows: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(rowEntryOf),
-    parentDatabase: parentDatabaseOf(state, page),
+    rows: page?.database == null ? [] : visible.filter(entry => entry.parentId === page.id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => rowEntryOf(entry, titles)),
+    parentDatabase,
+    related: relatedOf(state, visible, page?.database == null ? parentDatabase : { id: page.id, database: page.database }),
+    databases: visible.filter(entry => entry.database !== null && !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
     trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, trashedBy: state.members.find(member => member.id === entry.trashedBy)?.name ?? null, path: pathOf(state, entry) })),
     now,
   }
@@ -561,7 +591,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase])
+  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash, a.rows, a.parentDatabase, a.related, a.databases]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash, b.rows, b.parentDatabase, b.related, b.databases])
 
 // INIT
 
@@ -631,6 +661,15 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     case 'propertyType': {
       const current = editableDatabase(model)?.database.properties.find(entry => entry.id === picker.pageId)?.type._tag
       return D.PROPERTY_TAGS.map(tag => ({ value: tag, label: D.TYPE_LABEL[tag], isChecked: tag === current }))
+    }
+    case 'relation': {
+      const page = editableDatabase(model)
+      const property = page?.database.properties.find(entry => entry.id === picker.pageId)
+      const current = property?.type._tag === 'Relation' ? property.type.databaseId : null
+      return [
+        { value: 'self', label: 'This database', isChecked: current === '' || current === page?.id },
+        ...model.databases.filter(entry => entry.id !== page?.id).map(entry => ({ value: `db:${entry.id}`, label: entry.title, isChecked: current === entry.id })),
+      ]
     }
     case 'addProperty':
       return D.PROPERTY_TAGS.map(tag => ({ value: tag, label: D.TYPE_LABEL[tag], group: 'Type' }))
@@ -754,6 +793,7 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
       return chooseCell(model, picker, value)
     case 'property':
     case 'propertyType':
+    case 'relation':
     case 'addProperty':
     case 'view':
     case 'addView':
@@ -784,7 +824,7 @@ const cellOf = (model: Model, rowId: string, propertyId: string): CellTarget | n
   if (page === null) return null
   const source = page.database !== null
     ? { databaseId: page.id, database: page.database, row: model.rows.find(row => row.id === rowId), isLocked: page.isLocked }
-    : model.parentDatabase !== null && rowId === page.id ? { databaseId: model.parentDatabase.id, database: model.parentDatabase.database, row: rowEntryOf(page), isLocked: false } : null
+    : model.parentDatabase !== null && rowId === page.id ? { databaseId: model.parentDatabase.id, database: model.parentDatabase.database, row: rowEntryOf(page, titlesOf(model)), isLocked: false } : null
   if (source === null || source.row === undefined) return null
   const property = propertyId === D.TITLE ? null : source.database.properties.find(entry => entry.id === propertyId)
   if (property === undefined) return null
@@ -805,7 +845,7 @@ const setValue = (model: Model, cell: CellTarget, value: D.Value | null): Update
 
 const selectedIds = (cell: CellTarget): ReadonlyArray<string> => {
   const value = cell.property === null ? undefined : D.valueOf(cell.property, cell.row)
-  return value?._tag === 'OptionValue' ? [value.optionId] : value?._tag === 'OptionsValue' ? value.optionIds : value?._tag === 'PeopleValue' ? value.memberIds : []
+  return value?._tag === 'OptionValue' ? [value.optionId] : value?._tag === 'OptionsValue' ? value.optionIds : value?._tag === 'PeopleValue' ? value.memberIds : value?._tag === 'RelationValue' ? value.pageIds : []
 }
 
 /** Opens a cell: typed cells get an input, option and person cells a picker. */
@@ -821,7 +861,7 @@ const openCell = (model: Model, rowId: string, propertyId: string): UpdateReturn
   switch (property.type._tag) {
     case 'Select': case 'Status':
       return { model: withPicker(model, openPicker('cell', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId, scopeOf(model, rowId)))) }
-    case 'MultiSelect': case 'Person':
+    case 'MultiSelect': case 'Person': case 'Relation':
       return { model: withPicker(model, openPicker('cells', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId, scopeOf(model, rowId)))) }
     case 'Checkbox':
     {
@@ -900,6 +940,9 @@ const pickDate = (model: Model, day: string | null): UpdateReturn => {
   return cell === null || !cell.isEditable || (day !== null && !D.DATE_PATTERN.test(day)) ? { model: closed } : setValue(closed, cell, day === null ? null : { _tag: 'DateValue', start: day, end: null })
 }
 
+const relationName = (model: Model, databaseId: string): string =>
+  databaseId === '' ? 'This database' : model.databases.find(entry => entry.id === databaseId)?.title ?? 'Untitled'
+
 const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerItem> => {
   const page = editableDatabase(model)
   const view = page === null ? null : activeView(page.database, model.db)
@@ -915,6 +958,7 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
   return [
     { value: 'rename', label: 'Rename', group: 'Property' },
     { value: 'type', label: 'Change type', group: 'Property', hint: D.TYPE_LABEL[property.type._tag] },
+    ...(property.type._tag === 'Relation' ? [{ value: 'relate', label: 'Related to', group: 'Property', hint: relationName(model, property.type.databaseId) }] : []),
     ...sorts,
     { value: 'hide', label: 'Hide in view', group: 'View' },
     { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
@@ -922,11 +966,18 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
   ]
 }
 
+/** The rows a relation can link to. */
+const relatedRows = (model: Model, databaseId: string, property: D.Property): ReadonlyArray<LinkedPage> => {
+  const targetId = property.type._tag !== 'Relation' ? null : property.type.databaseId === '' ? databaseId : property.type.databaseId
+  return model.related.find(entry => entry.id === targetId)?.rows ?? []
+}
+
 const cellItems = (model: Model, target: string, query: string): ReadonlyArray<PickerItem> => {
   const ref = parseTarget(target)
   const cell = ref === null ? null : cellOf(model, ref.rowId, ref.propertyId)
   if (cell?.property == null) return []
   const chosen = selectedIds(cell)
+  if (cell.property.type._tag === 'Relation') return relatedRows(model, cell.databaseId, cell.property).map(row => ({ value: `option:${row.id}`, label: row.title === '' ? 'Untitled' : row.title, isChecked: chosen.includes(row.id) }))
   if (cell.property.type._tag === 'Person') return model.people.map(person => ({ value: `option:${person.id}`, label: person.name, isChecked: chosen.includes(person.id) }))
   const options = D.optionsOf(cell.property)
   const name = query.trim()
@@ -953,7 +1004,7 @@ const chooseCell = (model: Model, picker: Picker, value: string): UpdateReturn =
   if (id === '') return { model: next }
   if (!isMulti) return setValue(next, cell, chosen.includes(id) ? null : { _tag: 'OptionValue', optionId: id })
   const ids = chosen.includes(id) ? chosen.filter(entry => entry !== id) : [...chosen, id]
-  return setValue(next, cell, ids.length === 0 ? null : cell.property.type._tag === 'Person' ? { _tag: 'PeopleValue', memberIds: ids } : { _tag: 'OptionsValue', optionIds: ids })
+  return setValue(next, cell, ids.length === 0 ? null : cell.property.type._tag === 'Person' ? { _tag: 'PeopleValue', memberIds: ids } : cell.property.type._tag === 'Relation' ? { _tag: 'RelationValue', pageIds: ids } : { _tag: 'OptionsValue', optionIds: ids })
 }
 
 /** The open filter of the active view, with its property (null: the title). */
@@ -971,6 +1022,7 @@ const pickableOf = (model: Model, property: D.Property | null): ReadonlyArray<Re
   switch (property?.type._tag) {
     case 'Select': case 'Status': case 'MultiSelect': return D.optionsOf(property)
     case 'Person': case 'CreatedBy': case 'LastEditedBy': return model.people
+    case 'Relation': return model.page === null ? [] : relatedRows(model, model.page.id, property).map(row => ({ id: row.id, name: row.title === '' ? 'Untitled' : row.title }))
     default: return null
   }
 }
@@ -1077,12 +1129,17 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
       if (property === undefined) return { model: closed }
       switch (value) {
         case 'rename': return { model: focusOn(withDb(closed, { renaming: { propertyId: property.id, name: property.name } }), `#${PROPERTY_NAME_ID}`) }
+        case 'relate': return property.type._tag === 'Relation' ? { model: withPicker(model, openPicker('relation', property.id, picker.anchor)) } : { model: closed }
         case 'type': return { model: withPicker(model, openPicker('propertyType', property.id, picker.anchor, Math.max(0, D.PROPERTY_TAGS.indexOf(property.type._tag)))) }
         case 'hide': return view === null ? { model: closed } : changeDb(model, page, { _tag: 'SetHidden', viewId: view.id, propertyId: property.id, isHidden: true })
         case 'duplicate': return changeDb(model, page, { _tag: 'DuplicateProperty', propertyId: property.id })
         case 'delete': return changeDb(model, page, { _tag: 'DeleteProperty', propertyId: property.id })
         default: return { model: closed }
       }
+    }
+    case 'relation': {
+      const databaseId = value === 'self' ? '' : model.databases.find(entry => `db:${entry.id}` === value)?.id
+      return property?.type._tag === 'Relation' && databaseId !== undefined ? changeDb(model, page, { _tag: 'SetRelation', propertyId: property.id, databaseId }) : { model: closed }
     }
     case 'propertyType':
       return property !== undefined && D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'SetPropertyType', propertyId: property.id, tag: value }) : { model: closed }
@@ -1610,7 +1667,7 @@ const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): Readonl
   const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES, scope: '', isPeeking: view !== null && D.openInOf(view) !== 'full' }
   if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: model.rows }, h)]
   return [
-    ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, rowEntryOf(page), { ...context, isEditable: !model.isInTrash }, h)]),
+    ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, rowEntryOf(page, titlesOf(model)), { ...context, isEditable: !model.isInTrash }, h)]),
     ...(isEditable && model.parentDatabase === null && isBlankPage(page) ? [startView(h)] : []),
     editorView(model, page, h),
   ]

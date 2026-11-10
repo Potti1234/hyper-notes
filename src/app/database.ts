@@ -38,16 +38,18 @@ export const PropertyType = S.Union([
   S.TaggedStruct('LastEditedBy', {}),
   /** Numbers rows 1, 2, 3… as they are created; shown as `prefix-n` when there is a prefix. */
   S.TaggedStruct('Id', { prefix: S.String }),
+  /** Links rows to pages of a database ('' for this one). */
+  S.TaggedStruct('Relation', { databaseId: S.String }),
 ])
 export type PropertyType = typeof PropertyType.Type
 export type PropertyTag = PropertyType['_tag']
 
-export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id']
+export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Relation']
 export const isPropertyTag = (tag: string): tag is PropertyTag => (PROPERTY_TAGS as ReadonlyArray<string>).includes(tag)
 
 export const TYPE_LABEL: Readonly<Record<PropertyTag, string>> = {
   Text: 'Text', Number: 'Number', Select: 'Select', MultiSelect: 'Multi-select', Status: 'Status', Date: 'Date', Person: 'Person', Checkbox: 'Checkbox',
-  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID',
+  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID', Relation: 'Relation',
 }
 
 export const Property = S.Struct({ id: S.String, name: S.String, type: PropertyType })
@@ -64,6 +66,7 @@ export const Value = S.Union([
   S.TaggedStruct('DateValue', { start: S.String, end: S.NullOr(S.String) }),
   S.TaggedStruct('PeopleValue', { memberIds: S.Array(S.String) }),
   S.TaggedStruct('CheckboxValue', { isChecked: S.Boolean }),
+  S.TaggedStruct('RelationValue', { pageIds: S.Array(S.String) }),
 ])
 export type Value = typeof Value.Type
 export const Values = S.Record(S.String, Value)
@@ -151,6 +154,7 @@ export const typeOf = (tag: PropertyTag, id: (prefix: string) => string, keep?: 
   const options = keep !== undefined && 'options' in keep ? keep.options.map(({ id: optionId, name, color }) => ({ id: optionId, name, color })) : []
   switch (tag) {
     case 'Id': return { _tag: 'Id', prefix: '' }
+    case 'Relation': return { _tag: 'Relation', databaseId: keep?._tag === 'Relation' ? keep.databaseId : '' }
     case 'Number': return { _tag: 'Number', format: 'number' }
     case 'Select': return { _tag: 'Select', options }
     case 'MultiSelect': return { _tag: 'MultiSelect', options }
@@ -195,6 +199,7 @@ export const valueOf = (property: Property, row: Row): Value | null => {
   switch (property.type._tag) {
     case 'Text': case 'Url': case 'Email': case 'Phone': return value._tag === 'TextValue' && value.text !== '' ? value : null
     case 'Number': case 'Id': return value._tag === 'NumberValue' ? value : null
+    case 'Relation': return value._tag === 'RelationValue' && value.pageIds.length > 0 ? value : null
     case 'Select': case 'Status': return value._tag === 'OptionValue' && optionsOf(property).some(option => option.id === value.optionId) ? value : null
     case 'MultiSelect': {
       if (value._tag !== 'OptionsValue') return null
@@ -253,6 +258,7 @@ export const textOf = (property: Property | null, row: Row, people: ReadonlyArra
     case 'DateValue': return value.end === null ? value.start : `${value.start} to ${value.end}`
     case 'PeopleValue': return value.memberIds.map(name).join(', ')
     case 'CheckboxValue': return value.isChecked ? 'Yes' : ''
+    case 'RelationValue': return value.pageIds.join(', ')
   }
 }
 
@@ -305,6 +311,8 @@ export const checkValue = (property: Property, value: Value, people: ReadonlyArr
       return value._tag === 'CheckboxValue' ? value : 'That value does not fit this property.'
     case 'Id':
       return 'IDs are numbered by themselves.'
+    case 'Relation':
+      return value._tag === 'RelationValue' ? { _tag: 'RelationValue', pageIds: [...new Set(value.pageIds)].slice(0, MAX_OPTIONS) } : 'That value does not fit this property.'
     default:
       return 'This property fills itself in.'
   }
@@ -326,6 +334,7 @@ export const operatorsFor = (property: Property | null): ReadonlyArray<Operator>
   switch (property?.type._tag ?? 'Title') {
     case 'Number': case 'Id': return ['is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
     case 'Select': case 'Status': return ['is', 'isNot', 'isEmpty', 'isNotEmpty']
+    case 'Relation':
     case 'MultiSelect': case 'Person': case 'CreatedBy': case 'LastEditedBy': return ['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']
     case 'Date': case 'CreatedTime': case 'LastEditedTime': return ['is', 'before', 'after', 'isEmpty', 'isNotEmpty']
     case 'Checkbox': return ['isChecked', 'isNotChecked']
@@ -340,7 +349,7 @@ const idsOf = (property: Property, row: Row): ReadonlyArray<string> => {
   if (property.type._tag === 'CreatedBy') return [row.createdBy]
   if (property.type._tag === 'LastEditedBy') return [row.updatedBy]
   const value = valueOf(property, row)
-  return value?._tag === 'OptionValue' ? [value.optionId] : value?._tag === 'OptionsValue' ? value.optionIds : value?._tag === 'PeopleValue' ? value.memberIds : []
+  return value?._tag === 'OptionValue' ? [value.optionId] : value?._tag === 'OptionsValue' ? value.optionIds : value?._tag === 'PeopleValue' ? value.memberIds : value?._tag === 'RelationValue' ? value.pageIds : []
 }
 
 export const matchesFilter = (database: Database, filter: Filter, row: Row, people: ReadonlyArray<Person>): boolean => {
@@ -354,7 +363,7 @@ export const matchesFilter = (database: Database, filter: Filter, row: Row, peop
   // An unfinished filter (no value yet) keeps every row, like Notion.
   if (filter.value === '') return true
   const tag = property?.type._tag ?? 'Title'
-  if (property !== null && (tag === 'Select' || tag === 'Status' || tag === 'MultiSelect' || tag === 'Person' || tag === 'CreatedBy' || tag === 'LastEditedBy')) {
+  if (property !== null && (tag === 'Select' || tag === 'Status' || tag === 'MultiSelect' || tag === 'Person' || tag === 'CreatedBy' || tag === 'LastEditedBy' || tag === 'Relation')) {
     const has = idsOf(property, row).includes(filter.value)
     return filter.operator === 'is' || filter.operator === 'contains' ? has : !has
   }
@@ -517,6 +526,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetFilter', { viewId: S.String, filterId: S.String, operator: Operator, value: S.String }),
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
+  S.TaggedStruct('SetRelation', { propertyId: S.String, databaseId: S.String }),
   S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
   S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
   S.TaggedStruct('SetCardSize', { viewId: S.String, size: CardSize }),
@@ -663,6 +673,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
         const sort = { propertyId: change.propertyId, isDescending: change.isDescending }
         return { ...view, sorts: existing < 0 ? [...others, sort] : view.sorts.map(entry => (entry.propertyId === change.propertyId ? sort : entry)) }
       })
+    case 'SetRelation': {
+      const property = propertyOf(database, change.propertyId)
+      if (property?.type._tag !== 'Relation') return 'That property is not a relation.'
+      const type: PropertyType = { _tag: 'Relation', databaseId: change.databaseId.slice(0, 200) }
+      return { database: { ...database, properties: database.properties.map(entry => (entry.id === property.id ? { ...entry, type } : entry)) }, addedId: null }
+    }
     case 'SetWidth': {
       if (!isProperty(change.propertyId)) return 'That property is gone.'
       if (!Number.isFinite(change.width)) return 'That width does not fit.'

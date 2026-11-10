@@ -356,4 +356,33 @@ describe('page: databases', () => {
       assert.deepInclude(argsOf(send(gallery.model, PagePage.Message.ChosePicker({ value: 'size:large' })), 'ChangeDatabase'), { change: { _tag: 'SetCardSize', viewId: 'demo-tasks-table', size: 'large' } })
     })
   })
+
+  describe('relations', () => {
+    const related = () => {
+      const data = demoData(NOW)
+      const pages = data.pages.map(page => page.id === 'demo-tasks' && page.database !== null
+        ? { ...page, database: { ...page.database, properties: [...page.database.properties, { id: 'rel', name: 'Blocked by', type: { _tag: 'Relation' as const, databaseId: '' } }] } }
+        : page.id === 'demo-task-1' ? { ...page, values: { ...page.values, rel: { _tag: 'RelationValue' as const, pageIds: ['demo-task-2'] } } } : page)
+      const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
+      return PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
+    }
+
+    it('a relation cell picks rows of the related database and names them', () => {
+      const model = related()
+      assert.deepStrictEqual(model.related.map(entry => entry.id), ['demo-tasks'])
+      assert.isString(model.rows.find(entry => entry.id === 'demo-task-1')?.links['demo-task-2'])
+      const opened = send(model, PagePage.Message.ClickedCell({ rowId: 'demo-task-1', propertyId: 'rel' }))
+      assert.strictEqual(opened.model.picker?.field, 'cells')
+      assert.isTrue(PagePage.pickerItems(opened.model).some(item => item.value === 'option:demo-task-2' && item.isChecked === true))
+      assert.deepInclude(argsOf(send(opened.model, PagePage.Message.ChosePicker({ value: 'option:demo-task-2' })), 'SetValue'), { propertyId: 'rel', value: null })
+    })
+
+    it('the header menu points a relation at another database', () => {
+      const header = send(related(), PagePage.Message.ClickedHeader({ propertyId: 'rel' }))
+      const relate = send(header.model, PagePage.Message.ChosePicker({ value: 'relate' }))
+      assert.strictEqual(relate.model.picker?.field, 'relation')
+      assert.deepStrictEqual(names(send(relate.model, PagePage.Message.ChosePicker({ value: 'db:nope' }))), [])
+      assert.deepInclude(argsOf(send(relate.model, PagePage.Message.ChosePicker({ value: 'self' })), 'ChangeDatabase'), { change: { _tag: 'SetRelation', propertyId: 'rel', databaseId: '' } })
+    })
+  })
 })

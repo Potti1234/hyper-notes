@@ -30,7 +30,15 @@ export const RowEntry = S.Struct({
   updatedBy: S.String,
   /** The start of the row page's text, for gallery cards and peeks. */
   preview: S.String,
+  /** Titles of the pages its relations link to, by id. */
+  links: S.Record(S.String, S.String),
 })
+
+export const LinkedPage = S.Struct({ id: S.String, title: S.String, icon: S.String })
+export type LinkedPage = typeof LinkedPage.Type
+/** A database the open one relates to, with the rows its relation cells can pick. */
+export const RelatedDatabase = S.Struct({ id: S.String, title: S.String, rows: S.Array(LinkedPage) })
+export type RelatedDatabase = typeof RelatedDatabase.Type
 export type RowEntry = typeof RowEntry.Type
 
 /** The database a page is a row of, for its property list. */
@@ -103,7 +111,7 @@ export const draftOf = (property: D.Property | null, row: RowEntry): string => {
 }
 
 export const TYPE_ICON: Readonly<Record<D.PropertyTag | 'Title', string>> = {
-  Title: 'type', Id: 'list-ordered', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
+  Title: 'type', Id: 'list-ordered', Relation: 'arrow-up-right', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
   Checkbox: 'square-check', Url: 'link', Email: 'at-sign', Phone: 'pin', CreatedTime: 'clock', CreatedBy: 'user', LastEditedTime: 'clock', LastEditedBy: 'user',
 }
 
@@ -174,6 +182,10 @@ const shown = <Msg>(property: D.Property | null, row: RowEntry, people: Readonly
   if (property === null) return [row.title === '' ? box({ as: 'span', class: 'text-muted-foreground', children: ['Untitled'] }, h) : row.title]
   switch (property.type._tag) {
     case 'Select': case 'MultiSelect': case 'Status': return chips(property, row, h)
+    case 'Relation': {
+      const value = D.valueOf(property, row)
+      return value?._tag === 'RelationValue' ? value.pageIds.map(id => optionChip({ color: 'default', children: [row.links[id] ?? 'Untitled'] }, h)) : []
+    }
     case 'Number': {
       const value = D.valueOf(property, row)
       return value?._tag === 'NumberValue' ? [D.formatNumber(value.value, property.type.format)] : []

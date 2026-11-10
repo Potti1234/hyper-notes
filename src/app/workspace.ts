@@ -329,6 +329,10 @@ export const changeDatabase = (pageId: string, change: DatabaseChange, actorId: 
   Effect.gen(function* () {
     const page = yield* editablePage(data, pageId, actorId)
     if (page.database === null) return yield* invalid('This page is not a database.')
+    if (change._tag === 'SetRelation' && change.databaseId !== '') {
+      const target = pageById(data.pages, change.databaseId)
+      if (target?.database == null || target.trashedAt !== null || !canSee(target, actorId)) return yield* invalid('Pick a database to relate to.')
+    }
     const changed = applyChange(page.database, change, id)
     if (typeof changed === 'string') return yield* invalid(changed)
     if (changed.database === page.database) return [changed.addedId, data] as const
@@ -352,8 +356,13 @@ export const setValue = (rowId: string, propertyId: string, value: Value | null,
     if (property === null) return yield* invalid('That property is gone.')
     const checked = value === null ? null : checkValue(property, value, data.members)
     if (typeof checked === 'string') return yield* invalid(checked)
+    if (checked?._tag === 'RelationValue' && property.type._tag === 'Relation') {
+      const targetId = property.type.databaseId === '' ? row.parentId : property.type.databaseId
+      const allowed = new Set(childrenOf(data.pages, targetId).filter(entry => entry.trashedAt === null && canSee(entry, actorId)).map(entry => entry.id))
+      if (!checked.pageIds.every(id => allowed.has(id))) return yield* invalid('Pick pages from the related database.')
+    }
     const { [propertyId]: _old, ...rest } = row.values
-    const isEmpty = checked === null || (checked._tag === 'TextValue' && checked.text === '') || (checked._tag === 'OptionsValue' && checked.optionIds.length === 0) || (checked._tag === 'PeopleValue' && checked.memberIds.length === 0)
+    const isEmpty = checked === null || (checked._tag === 'TextValue' && checked.text === '') || (checked._tag === 'OptionsValue' && checked.optionIds.length === 0) || (checked._tag === 'RelationValue' && checked.pageIds.length === 0) || (checked._tag === 'PeopleValue' && checked.memberIds.length === 0)
     const next: Page = { ...row, values: isEmpty ? rest : { ...rest, [propertyId]: checked }, updatedBy: actorId, updatedAt: at }
     return [next, { ...data, pages: replacePages(data.pages, [next]) }] as const
   })

@@ -186,6 +186,22 @@ describe('databases: workspace operations', () => {
       assert.strictEqual(D.idText('', 3), '3')
     })))
 
+  it.effect('relations link rows of their database only', () =>
+    run(Effect.gen(function* () {
+      const workspace = yield* Workspace
+      const page = yield* workspace.createPage({ parentId: null, section: 'workspace', title: 'Links' }, 'avery')
+      yield* workspace.makeDatabase(page.id, 'table', 'avery')
+      const first = yield* workspace.addRow(page.id, { title: 'One', values: {}, beforeId: null }, 'avery')
+      const second = yield* workspace.addRow(page.id, { title: 'Two', values: {}, beforeId: null }, 'avery')
+      const propertyId = (yield* workspace.changeDatabase(page.id, { _tag: 'AddProperty', tag: 'Relation', name: '' }, 'avery'))!
+      const linked = yield* workspace.setValue(first.id, propertyId, { _tag: 'RelationValue', pageIds: [second.id, second.id] }, 'avery')
+      assert.deepStrictEqual(linked.values[propertyId], { _tag: 'RelationValue', pageIds: [second.id] })
+      const outside = yield* Effect.flip(workspace.setValue(first.id, propertyId, { _tag: 'RelationValue', pageIds: [DEMO_HOME] }, 'avery'))
+      assert.strictEqual(outside.reason, 'Pick pages from the related database.')
+      const notDb = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetRelation', propertyId, databaseId: DEMO_HOME }, 'avery'))
+      assert.strictEqual(notDb.reason, 'Pick a database to relate to.')
+    })))
+
   it.effect('pages with content, locked or private pages of others cannot change', () =>
     run(Effect.gen(function* () {
       const workspace = yield* Workspace
