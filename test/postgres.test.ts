@@ -2,6 +2,7 @@ import { assert, describe, it } from '@effect/vitest'
 import { Clock, Context, Effect, Layer, Stream } from 'effect'
 import { SqlClient } from 'effect/sql'
 
+import { optionsOf } from '@/app/database'
 import * as Postgres from '@/app/postgres'
 import { DEMO_HOME, demoData } from '@/app/seed'
 import { Workspace } from '@/app/store'
@@ -62,6 +63,28 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.isFalse(reloaded.favorites.some(row => row.pageId === child.id))
       assert.isFalse(reloaded.comments.some(comment => comment.pageId === child.id))
       assert.isFalse(reloaded.versions.some(version => version.pageId === child.id))
+    })))
+
+  it.live('stores databases and the values of their rows', () =>
+    Effect.scoped(Effect.gen(function* () {
+      yield* reset
+      const one = yield* store
+      yield* one.seedDemo(demoData(yield* Clock.currentTimeMillis))
+      const tasks = yield* one.createPage({ parentId: null, section: 'workspace', title: 'Tasks' }, 'avery')
+      const database = (yield* one.makeDatabase(tasks.id, 'board', 'avery')).database!
+      const status = database.properties[0]!
+      const done = optionsOf(status)[2]!
+      const row = yield* one.addRow(tasks.id, { title: 'Ship it', values: { [status.id]: { _tag: 'OptionValue', optionId: done.id } }, beforeId: null }, 'avery')
+      const tag = yield* one.changeDatabase(tasks.id, { _tag: 'AddOption', propertyId: database.properties[1]!.id, name: 'Launch' }, 'avery')
+      yield* one.setValue(row.id, database.properties[1]!.id, { _tag: 'OptionsValue', optionIds: [tag!] }, 'avery')
+      const fresh = yield* store
+      const state = yield* fresh.current
+      const stored = state.pages.find(page => page.id === tasks.id)!
+      assert.deepStrictEqual(stored.database?.properties.map(property => property.name), ['Status', 'Tags'])
+      assert.deepStrictEqual(stored.database?.views.map(view => [view.layout, view.groupBy]), [['board', status.id]])
+      const storedRow = state.pages.find(page => page.id === row.id)!
+      assert.deepStrictEqual(storedRow.values, { [status.id]: { _tag: 'OptionValue', optionId: done.id }, [database.properties[1]!.id]: { _tag: 'OptionsValue', optionIds: [tag!] } })
+      assert.deepStrictEqual(state.pages.find(page => page.id === DEMO_HOME)?.values, {})
     })))
 
   it.live('clears demo content and keeps real pages', () =>
