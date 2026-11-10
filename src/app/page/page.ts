@@ -5,7 +5,7 @@ import type { Attribute, Document, Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import * as Navigation from 'foldkit/navigation'
 
-import { type Program, keyBindings, region } from '@hyper-effect/core'
+import { type Program, keyBindings, region, sampleLatest } from '@hyper-effect/core'
 import * as Island from '@hyper-effect/island'
 
 import * as Icon from '@/lib/icon'
@@ -23,7 +23,7 @@ import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import * as D from '../database'
 import { MAX_FORMULA, parse as parseFormula } from '../formula'
-import { Workspace, type WorkspaceState } from '../store'
+import { Viewers, Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverPosition, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
@@ -83,6 +83,10 @@ export const Model = S.Struct({
   me: Member,
   view: View,
   pageId: S.NullOr(S.String),
+  /** Whether the live connection is open; only then is this person listed as viewing. */
+  isConnected: S.Boolean,
+  /** Everyone with this page open, this person included. */
+  viewers: S.Array(Member),
   /** Null once it is gone (deleted for good, or made private by someone else). */
   page: S.NullOr(Page),
   crumbs: S.Array(Crumb),
@@ -252,6 +256,8 @@ export const Message = defineMessageUnion({
   SucceededTrash: { pageId: S.String },
   FailedChange: { reason: S.String },
   CompletedChange: {},
+  ChangedConnection: { isConnected: S.Boolean },
+  ChangedViewers: { viewers: S.Array(Member) },
   CompletedBrowserAction: {},
 })
 export type Message = typeof Message.Type
@@ -645,7 +651,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -1787,6 +1793,8 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
           ? { model }
           : { model: { ...model, history: null }, commands: [RestoreVersion({ versionId, actorId: model.me.id })] },
       GotPage: ({ _tag: _, ...slice }) => ({ model: keepDb(model, keepConfirm(keepHistory(keepComposer({ ...model, ...slice })))) }),
+      ChangedConnection: ({ isConnected }) => ({ model: { ...model, isConnected } }),
+      ChangedViewers: ({ viewers }) => ({ model: { ...model, viewers } }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
       SucceededTrash: () => ({ model }),
       FailedChange: ({ reason }) => ({ model: { ...model, notice: reason } }),
@@ -1806,7 +1814,28 @@ export const update = (model: Model, message: Message): UpdateReturn => {
 
 // SUBSCRIPTION
 
-export const subscriptions = Subscription.make<Model, Message, Workspace>()(entry => ({
+export const subscriptions = Subscription.make<Model, Message, Workspace | Viewers>()(entry => ({
+  viewers: entry(
+    { pageId: S.NullOr(S.String), memberId: S.String, isConnected: S.Boolean },
+    {
+      modelToDependencies: model => ({ pageId: model.pageId, memberId: model.me.id, isConnected: model.isConnected }),
+      dependenciesToStream: ({ pageId, memberId, isConnected }) =>
+        !isConnected || pageId === null
+          ? Stream.empty
+          : Stream.unwrap(
+              Effect.gen(function* () {
+                const viewers = yield* Viewers
+                const workspace = yield* Workspace
+                yield* viewers.join(pageId, memberId)
+                return viewers.of(pageId).pipe(
+                  sampleLatest('300 millis'),
+                  Stream.mapEffect(ids => Effect.map(workspace.current, state => ids.flatMap(id => state.members.filter(member => member.id === id)))),
+                  Stream.map(members => Message.ChangedViewers({ viewers: members })),
+                )
+              }),
+            ),
+    },
+  ),
   page: entry(
     { pageId: S.NullOr(S.String), memberId: S.String },
     {
@@ -1830,6 +1859,14 @@ export const subscriptions = Subscription.make<Model, Message, Workspace>()(entr
 
 // VIEW
 
+/** Notion's presence: the avatars of the others who have this page open, newest last. */
+const viewersView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const others = model.viewers.filter(member => member.id !== model.me.id)
+  return box({ class: 'flex items-center', attributes: [h.Id('viewers'), h.AriaLive('polite'), h.AriaLabel(others.length === 0 ? 'Only you are here' : `${others.map(member => member.name).join(', ')} ${others.length === 1 ? 'is' : 'are'} viewing`)], children: others.length === 0
+      ? []
+      : [box({ class: 'flex -space-x-1.5 px-1', children: others.map(member => box({ as: 'span', class: 'rounded-full ring-2 ring-background', attributes: [h.Key(member.id), h.DataAttribute('viewer', member.id), h.Title(member.name)], children: [avatar(member, h, 'md')] }, h)) }, h)] }, h)
+}
+
 const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
   box({ as: 'header', class: 'flex h-11 shrink-0 items-center gap-1 px-3', attributes: [h.Id('topbar')], children: [
       ...(model.me.isSidebarCollapsed === true
@@ -1842,6 +1879,7 @@ const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
               box({ as: 'span', class: 'min-w-0 max-w-40 truncate', children: [crumb.title] }, h),
             ] }, h),
         ]) }, h),
+      viewersView(model, h),
       ...(model.page === null ? [] : [
         box({ as: 'span', class: 'px-2 text-[13px] text-muted-foreground', attributes: [h.Id('edited-at')], children: [`Edited ${formatAgo(model.page.updatedAt, model.now)}`] }, h),
         ...(model.page.isLocked && !model.isInTrash ? [button({ variant: 'ghost', size: 'compact', id: 'page-locked', title: 'Unlock this page to edit it', onClick: Message.ClickedUnlock(), children: [Icon.icon('lock', { class: 'size-3.5' }, h), 'Locked'] }, h)] : []),
@@ -2203,7 +2241,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         }, h),
       }),
       box({ as: 'main', class: 'flex min-w-0 flex-1 flex-col', children: [
-          region(h, { id: 'topbar', deps: [model.me.isSidebarCollapsed === true, model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
+          region(h, { id: 'topbar', deps: [model.viewers, model.me.id, model.me.isSidebarCollapsed === true, model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
           ...(model.page !== null && model.isInTrash ? [trashBanner(model.page, h)] : []),
           box({ class: 'min-h-0 flex-1 overflow-y-auto', attributes: [h.DataAttribute('keep-scroll', 'page')], children: [
               model.view === 'trash'
@@ -2245,7 +2283,7 @@ const firstPage = (state: WorkspaceState, memberId: string): string | null => {
   return nav.favorites[0]?.id ?? nav.workspace[0]?.id ?? nav.private[0]?.id ?? null
 }
 
-export const program: Program<Model, Message, ClientMessage, Flags, Workspace> = {
+export const program: Program<Model, Message, ClientMessage, Flags, Workspace | Viewers> = {
   name: 'page',
   Model,
   ClientMessage,
@@ -2263,6 +2301,7 @@ export const program: Program<Model, Message, ClientMessage, Flags, Workspace> =
   update,
   view,
   subscriptions,
+  onConnectionChange: isConnected => Message.ChangedConnection({ isConnected }),
   clientCommands: {
     LoadUrl: ({ url }) => (typeof url === 'string' ? { load: url } : undefined),
     FocusElement: ({ selector }) => (typeof selector === 'string' ? { focus: selector } : undefined),
