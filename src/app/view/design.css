@@ -1,0 +1,92 @@
+/* Component CSS of the app's owned design layer (crease.lock.json:
+   hypernotes/view). Every rule starts from a class the owning files render:
+   issue rows and board cards (issues/rows.ts), doc content and the editor
+   (view/design.ts, doc/tiptap.client.ts). */
+@layer components {
+  /* The page root (pageRoot): app type size, thin scrollbars, no native search clear button. */
+  .app-root { font-size: 13px; font-family: var(--font-sans); }
+  .app-root, .app-root * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent; }
+  .app-root input[type='search']::-webkit-search-cancel-button { display: none; }
+  /* Issue rows: the list renders hundreds of them, so their classes are named
+     once here instead of repeated in every row (issues/page.ts). */
+  .issue-row {
+    @apply relative flex h-[38px] items-center gap-2 border-b border-border/60 pr-4 pl-3 text-[13px] transition-colors hover:bg-accent/60;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 38px;
+  }
+  .issue-row[data-selected='true'] { @apply bg-accent; }
+  .issue-row[data-selected='true']::before { content: ''; @apply absolute inset-y-0 left-0 w-0.5 bg-primary; }
+  .issue-row-pick { @apply relative z-10 flex size-6 shrink-0 items-center justify-center rounded hover:bg-accent; }
+  .issue-row-id { @apply min-w-[52px] shrink-0 whitespace-nowrap text-[12px] tabular-nums text-muted-foreground; }
+  .issue-row-title { @apply min-w-0 flex-1 truncate font-medium; }
+  .issue-row-category { @apply hidden max-w-[160px] shrink-0 truncate rounded border px-1.5 text-[11px] leading-5 text-muted-foreground lg:inline; }
+  .issue-row-date { @apply w-12 shrink-0 text-right text-[12px] text-muted-foreground; }
+  /* Fixed board geometry matches BOARD_CARD_HEIGHT/GAP in issues/page.ts. */
+  .board-card-slot { height: 136px; padding-bottom: 8px; box-sizing: border-box; }
+  .board-card { height: 128px; box-sizing: border-box; grid-template-rows: 20px 36px 22px; }
+  .doc-content { font-size: 15px; line-height: 1.7; color: var(--foreground); overflow-wrap: anywhere; }
+  .doc-content > * + * { margin-top: 0.6em; }
+  .doc-content h1 { font-size: 1.75em; font-weight: 700; line-height: 1.25; margin-top: 1.4em; letter-spacing: -0.015em; }
+  .doc-content h2 { font-size: 1.4em; font-weight: 650; line-height: 1.3; margin-top: 1.3em; letter-spacing: -0.01em; }
+  .doc-content h3 { font-size: 1.15em; font-weight: 650; margin-top: 1.2em; }
+  .doc-content h4 { font-size: 1em; font-weight: 650; margin-top: 1.1em; }
+  .doc-content > :first-child { margin-top: 0; }
+  .doc-content a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in oklab, var(--primary) 40%, transparent); }
+  .doc-content strong { font-weight: 650; }
+  .doc-content ul { list-style: disc; padding-left: 1.5em; }
+  .doc-content ol { list-style: decimal; padding-left: 1.5em; }
+  .doc-content li > p { margin: 0.15em 0; }
+  .doc-content li::marker { color: var(--muted-foreground); }
+  .doc-content ul[data-type='taskList'] { list-style: none; padding-left: 0.2em; }
+  .doc-content li[data-type='taskItem'] { display: flex; align-items: flex-start; gap: 0.55em; }
+  .doc-content li[data-type='taskItem'] > label { margin-top: 0.3em; flex-shrink: 0; user-select: none; }
+  .doc-content li[data-type='taskItem'] > div { flex: 1; min-width: 0; }
+  .doc-content li[data-type='taskItem'][data-checked='true'] > div { color: var(--muted-foreground); text-decoration: line-through; }
+  /* The read-only view has no checkbox element: draw one. */
+  .doc-read li[data-type='taskItem']::before { content: '☐'; color: var(--muted-foreground); }
+  .doc-read li[data-type='taskItem'][data-checked='true']::before { content: '☑'; color: var(--primary); }
+  .doc-read li[data-type='taskItem'][data-checked='true'] > p { color: var(--muted-foreground); text-decoration: line-through; }
+  .doc-content blockquote { border-left: 3px solid var(--border); padding: 0.2em 0 0.2em 1em; color: color-mix(in oklab, var(--foreground) 85%, transparent); background: color-mix(in oklab, var(--muted) 50%, transparent); border-radius: 0 6px 6px 0; }
+  .doc-content code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.86em; background: var(--muted); padding: 0.15em 0.35em; border-radius: 4px; }
+  .doc-content pre { background: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0.85em 1em; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  .doc-content pre code { background: none; padding: 0; font-size: inherit; }
+  .doc-content hr { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
+  .doc-content img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border); }
+  .doc-content table, .doc-table table { border-collapse: collapse; width: 100%; font-size: 13px; line-height: 1.5; }
+  .doc-content .tableWrapper, .doc-table { overflow-x: auto; }
+  .doc-content th, .doc-content td { border: 1px solid var(--border); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
+  .doc-content th { background: var(--muted); font-weight: 600; }
+  .doc-content th > p, .doc-content td > p { margin: 0; }
+  .doc-content .selectedCell { background: color-mix(in oklab, var(--primary) 10%, transparent); }
+
+  /* The editor (ProseMirror's base rules; TipTap does not inject them, see the CSP). */
+  .doc-editable { position: relative; word-wrap: break-word; white-space: pre-wrap; white-space: break-spaces; font-variant-ligatures: none; font-feature-settings: 'liga' 0; }
+  .doc-editable pre { white-space: pre-wrap; }
+  .doc-editable li { position: relative; }
+  .doc-editable.ProseMirror-hideselection *::selection { background: transparent; }
+  .doc-editable.ProseMirror-hideselection { caret-color: transparent; }
+  .doc-editable [draggable][contenteditable=false] { user-select: text; }
+  .doc-editable .ProseMirror-gapcursor { display: none; pointer-events: none; position: absolute; }
+  .doc-editable .ProseMirror-gapcursor:after { content: ''; display: block; position: absolute; top: -2px; width: 20px; border-top: 1px solid var(--foreground); animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite; }
+  @keyframes ProseMirror-cursor-blink { to { visibility: hidden; } }
+  .doc-editable.ProseMirror-focused .ProseMirror-gapcursor { display: block; }
+  .doc-editor .doc-editable { outline: none; min-height: 40vh; padding-bottom: 30vh; }
+  .doc-editor .doc-editable p.is-empty::before,
+  .doc-editor .doc-editable h1.is-empty::before,
+  .doc-editor .doc-editable h2.is-empty::before,
+  .doc-editor .doc-editable h3.is-empty::before { content: attr(data-placeholder); color: var(--muted-foreground); opacity: 0.7; pointer-events: none; float: left; height: 0; }
+  .doc-editor .doc-editable-selectednode { outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent); border-radius: 4px; }
+
+  /* The "/" menu and the formatting bar (placed by the editor, kept in the window). */
+  .doc-menu { position: fixed; z-index: 60; width: 240px; max-height: min(340px, calc(100vh - 16px)); overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 8px 30px rgb(0 0 0 / 0.14); font-size: 13px; }
+  .doc-menu-item { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
+  .doc-menu-item[data-active='true'] { background: var(--accent); }
+  @media (hover: hover) { .doc-menu-item:hover { background: var(--accent); } }
+  .doc-menu-item kbd { font-family: inherit; font-size: 11px; color: var(--muted-foreground); }
+  .doc-menu-empty { padding: 8px; color: var(--muted-foreground); }
+  .doc-bubble { display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: 0 6px 24px rgb(0 0 0 / 0.14); z-index: 60; }
+  .doc-bubble button { min-width: 28px; height: 26px; padding: 0 6px; border-radius: 5px; font-size: 12px; font-weight: 600; color: var(--foreground); }
+  @media (hover: hover) { .doc-bubble button:hover { background: var(--accent); } }
+  .doc-bubble button[data-active='true'] { background: color-mix(in oklab, var(--primary) 14%, transparent); color: var(--primary); }
+  .doc-bubble-link { height: 26px; width: 200px; padding: 0 6px; margin-left: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); font-size: 12px; }
+}
