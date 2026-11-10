@@ -92,6 +92,7 @@ export type Action =
   | Readonly<{ _tag: 'Undo' }>
   | Readonly<{ _tag: 'Redo' }>
   | Readonly<{ _tag: 'ReplaceDocument'; doc: Document }>
+  | Readonly<{ _tag: 'Drop'; ids: ReadonlyArray<string>; targetId: string; place: B.DropPlace }>
 
 // HELPERS
 
@@ -581,15 +582,22 @@ export const apply = (state: EditorState, action: Action): EditorState => {
       const kind = B.kindOf(action.tag, action.level)
       const id = ids(state)
       // An empty block becomes the chosen one; otherwise it goes below (Notion).
-      if (T.lengthOf(text) === 0 || target.kind._tag === 'Paragraph' && T.lengthOf(text) === 0) {
-        const doc = B.update(state.doc, blockId, entry => ({ ...entry, kind, text: hasText(kind) ? text : [] }))
+      const columns = (): ReadonlyArray<Block> => kind._tag === 'ColumnList' ? [0, 1].map(() => B.block(id.next(), { _tag: 'Column', ratio: 1 }, [], [B.paragraph(id.next())])) : []
+      if (T.lengthOf(text) === 0) {
+        const doc = B.update(state.doc, blockId, entry => ({ ...entry, kind, text: hasText(kind) ? text : [], children: kind._tag === 'ColumnList' ? columns() : entry.children }))
         const after = hasText(kind) ? doc : B.insertAfter(doc, blockId, [B.paragraph(id.next())])
         const caretId = hasText(kind) ? blockId : (B.nextVisible(after, blockId)?.id ?? blockId)
         return withHistory(state, { ...state, doc: after, menu: { _tag: 'NoMenu' }, selection: caret(caretId, 0), idCount: id.count() }, 'none')
       }
-      const fresh = B.block(id.next(), kind)
+      const fresh = B.block(id.next(), kind, [], columns())
       const doc = B.insertAfter(B.update(state.doc, blockId, entry => ({ ...entry, text })), blockId, [fresh])
       return withHistory(state, { ...state, doc, menu: { _tag: 'NoMenu' }, selection: hasText(kind) ? caret(fresh.id, 0) : { _tag: 'BlockSelection', ids: [fresh.id], anchorId: fresh.id }, idCount: id.count() }, 'none')
+    }
+    case 'Drop': {
+      if (action.ids.includes(action.targetId)) return state
+      const id = ids(state)
+      const doc = B.moveBlocks(state.doc, action.ids, action.targetId, action.place, id.next)
+      return withHistory(state, { ...state, doc, idCount: id.count(), selection: { _tag: 'BlockSelection', ids: action.ids, anchorId: action.ids[0] ?? '' } }, 'none')
     }
     case 'CloseMenu': return { ...state, menu: { _tag: 'NoMenu' } }
     case 'Undo': {

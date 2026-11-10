@@ -1132,6 +1132,51 @@
             "path",
             "rect"
           ]
+        },
+        {
+          "path": "src/app/editor/render.ts",
+          "role": "adapter",
+          "rawRendering": true,
+          "rawElements": [
+            "div",
+            "span",
+            "p",
+            "h1",
+            "h2",
+            "h3",
+            "strong",
+            "em",
+            "u",
+            "s",
+            "code",
+            "pre",
+            "blockquote",
+            "hr",
+            "br",
+            "a",
+            "img",
+            "table",
+            "tbody",
+            "tr",
+            "td",
+            "th",
+            "nav",
+            "label"
+          ]
+        },
+        {
+          "path": "src/app/editor/editor.client.ts",
+          "role": "adapter",
+          "rawRendering": true,
+          "rawElements": [
+            "div",
+            "span"
+          ]
+        },
+        {
+          "path": "src/app/editor/dom.client.ts",
+          "role": "behavior",
+          "rawRendering": true
         }
       ]
     }

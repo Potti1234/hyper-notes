@@ -5,6 +5,7 @@ import { defineMessageUnion } from 'foldkit/message'
 import * as Navigation from 'foldkit/navigation'
 
 import { type Program, region } from '@hyper-effect/core'
+import * as Island from '@hyper-effect/island'
 
 import * as Icon from '@/lib/icon'
 import { button } from '@/ui/button'
@@ -12,6 +13,9 @@ import { input } from '@/ui/input'
 
 import { requireMember } from '../auth'
 import { Member, Page, Section, formatAgo, titleOf } from '../domain'
+import { EditorEvent, PageEditor } from '../editor/island'
+import { context, renderDocument } from '../editor/render'
+import { Document as BlockDocument } from '../editor/schema'
 import { Workspace, type WorkspaceState } from '../store'
 import { box, pageRoot } from '../view/design'
 import { pageIcon } from '../view/icons'
@@ -73,6 +77,8 @@ export const Message = defineMessageUnion({
   ClosedPicker: {},
   ChangedTitle: { title: S.String },
   SubmittedTitle: {},
+  /** The editor island's content, a new sub-page, a page to open. */
+  GotEditorEvent: { event: EditorEvent },
   ClickedFavorite: {},
   ClickedRestore: { pageId: S.String },
   ClickedDeleteForever: { pageId: S.String },
@@ -107,6 +113,7 @@ export const ClientMessage = S.Union([
   Message.ChosePicker,
   Message.ClosedPicker,
   Message.SubmittedTitle,
+  Message.GotEditorEvent,
   Message.ClickedFavorite,
   Message.ClickedRestore,
   Message.ClickedDeleteForever,
@@ -135,6 +142,20 @@ export const SaveTitle = Command.define('SaveTitle', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ pageId, title, actorId }) =>
     Workspace.use(workspace => workspace.updatePage(pageId, { title }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const SaveContent = Command.define('SaveContent', {
+  args: { pageId: S.String, content: BlockDocument, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ pageId, content, actorId }) =>
+    Workspace.use(workspace => workspace.updatePage(pageId, { content }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const CreateSubPage = Command.define('CreateSubPage', {
+  args: { parentId: S.String, childId: S.String, section: Section, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ parentId, childId, section, actorId }) =>
+    Workspace.use(workspace => workspace.createPage({ id: childId, parentId, section }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const SetExpanded = Command.define('SetExpanded', {
@@ -321,6 +342,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ChosePicker: ({ value }) => (model.picker === null ? { model } : choose(model, model.picker, value)),
       ClosedPicker: () => ({ model: { ...model, picker: null } }),
       ChangedTitle: ({ title }) => ({ model: { ...model, titleDraft: title } }),
+      GotEditorEvent: ({ event }) => {
+        const { page } = model
+        if (page === null || event.pageId !== page.id || model.isInTrash || page.isLocked) return { model }
+        switch (event._tag) {
+          case 'ChangedContent': return { model, commands: [SaveContent({ pageId: page.id, content: event.content, actorId: model.me.id })] }
+          case 'CreatedSubPage': return /^[A-Za-z0-9_-]{1,64}$/.test(event.childId) ? { model, commands: [CreateSubPage({ parentId: page.id, childId: event.childId, section: page.section, actorId: model.me.id })] } : { model }
+          case 'OpenedPage': return { model }
+        }
+      },
       SubmittedTitle: () =>
         model.page === null || model.titleDraft === null || model.page.isLocked || model.isInTrash
           ? { model: { ...model, titleDraft: null } }
@@ -391,7 +421,17 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html =>
   box({ as: 'article', class: 'mx-auto w-full max-w-[708px] px-6 pt-20 pb-40', attributes: [h.Id('page-body')], children: [
       box({ class: 'mb-2', children: [pageIcon(page.icon, h, 'lg')] }, h),
       input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'inline-lg', onInput: title => Message.ChangedTitle({ title }) }, h),
+      editorView(model, page, h),
     ] }, h)
+
+/** The page's blocks: the editor island, or read-only when locked or in Trash. */
+const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
+  const isEditable = !model.isInTrash && !page.isLocked
+  const props = { pageId: page.id, content: page.content, revision: page.updatedAt, isEditable, pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: [], crumbs: model.crumbs }
+  return isEditable
+    ? Island.view(PageEditor, { id: `editor-${page.id}`, props, onEvent: event => Message.GotEditorEvent({ event }) }, h)
+    : box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('read-only', page.id)], children: [...renderDocument(page.content, context(props), h)] }, h)
+}
 
 const trashView = (model: Model, h: HtmlBuilder<Message>): Html =>
   box({ as: 'section', class: 'mx-auto w-full max-w-[708px] px-6 pt-16', attributes: [h.Id('trash')], children: [
@@ -436,7 +476,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.picker === null ? [] : [pickerView({
