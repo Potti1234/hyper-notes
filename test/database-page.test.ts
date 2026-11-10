@@ -296,4 +296,30 @@ describe('page: databases', () => {
       assert.strictEqual(filterLabel(database, { id: 'x', propertyId: 'demo-due', operator: 'isEmpty', value: '' }, []), 'Due is empty')
     })
   })
+
+  describe('row peeks', () => {
+    it('Open peeks the row, focusing its close button; Close ends it', () => {
+      const peeked = send(model('demo-tasks'), PagePage.Message.ClickedPeek({ rowId: 'demo-task-1' }))
+      assert.strictEqual(peeked.model.db.peek, 'demo-task-1')
+      assert.deepInclude(argsOf(peeked, 'FocusElement'), { selector: '#peek-close' })
+      assert.isNull(send(peeked.model, PagePage.Message.ClosedPeek()).model.db.peek)
+      assert.isNull(send(model('demo-tasks'), PagePage.Message.ClickedPeek({ rowId: 'demo-welcome' })).model.db.peek, 'not a row')
+    })
+
+    it('cells of the peeked row open their menus at the peek', () => {
+      const peeked = send(model('demo-tasks'), PagePage.Message.ClickedPeek({ rowId: 'demo-task-1' }), PagePage.Message.ClickedCell({ rowId: 'demo-task-1', propertyId: 'demo-status' }))
+      assert.deepInclude(peeked.model.picker, { field: 'cell', anchor: '--peek-cell-demo-task-1-demo-status' })
+    })
+
+    it('the view menu sets how rows open; full page rows do not peek', () => {
+      const chosen = send(model('demo-tasks'), PagePage.Message.ClickedViewMenu({ viewId: 'demo-tasks-table' }), PagePage.Message.ChosePicker({ value: 'open:full' }))
+      assert.deepInclude(argsOf(chosen, 'ChangeDatabase'), { change: { _tag: 'SetOpenIn', viewId: 'demo-tasks-table', openIn: 'full' } })
+      assert.deepStrictEqual(names(send(model('demo-tasks'), PagePage.Message.ClickedViewMenu({ viewId: 'demo-tasks-table' }), PagePage.Message.ChosePicker({ value: 'open:window' }))), [])
+      const data = demoData(NOW)
+      const pages = data.pages.map(page => page.id === 'demo-tasks' && page.database !== null ? { ...page, database: { ...page.database, views: page.database.views.map(view => ({ ...view, openIn: 'full' as const })) } } : page)
+      const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
+      const full = PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
+      assert.isNull(send(full, PagePage.Message.ClickedPeek({ rowId: 'demo-task-1' })).model.db.peek)
+    })
+  })
 })

@@ -1,3 +1,4 @@
+import { plainText } from '../editor/text'
 import { Effect, Match as M, Option, Schema as S, Stream } from 'effect'
 import { Command, Subscription, type Update } from 'foldkit'
 import type { Document, Html, HtmlBuilder } from 'foldkit/html'
@@ -25,7 +26,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -215,6 +216,8 @@ export const Message = defineMessageUnion({
   ClickedAddFilter: {},
   ClickedFilter: { filterId: S.String },
   ClickedSorts: {},
+  ClickedPeek: { rowId: S.String },
+  ClosedPeek: {},
   SucceededDbChange: { addedId: S.NullOr(S.String), change: D.DatabaseChange },
   SucceededAddRow: { rowId: S.String },
   SucceededCreate: { id: S.String },
@@ -291,6 +294,8 @@ export const ClientMessage = S.Union([
   Message.ClickedAddFilter,
   Message.ClickedFilter,
   Message.ClickedSorts,
+  Message.ClickedPeek,
+  Message.ClosedPeek,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -512,9 +517,12 @@ export const LoadUrl = Command.define('LoadUrl', {
 
 export type Slice = Omit<typeof Message.GotPage.Type, '_tag' | 'me'> & Readonly<{ me: Member | null }>
 
+const PREVIEW_LENGTH = 400
+
 export const rowEntryOf = (page: Page): RowEntry => ({
   id: page.id, title: page.title, icon: page.icon, values: page.values, isLocked: page.isLocked,
   createdAt: page.createdAt, createdBy: page.createdBy, updatedAt: page.updatedAt, updatedBy: page.updatedBy,
+  preview: page.content.map(entry => plainText(entry.text).trim()).filter(text => text !== '').join('\n').slice(0, PREVIEW_LENGTH),
 })
 
 const pathOf = (state: WorkspaceState, page: Page): string => ancestorsOf(state.pages, page).map(titleOf).join(' / ')
@@ -635,6 +643,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
               { value: 'group:', label: 'None', group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === null },
               ...(model.page?.database?.properties ?? []).filter(D.canGroupBy).map(property => ({ value: `group:${property.id}`, label: property.name, group: 'Group by', isChecked: viewById(model, picker.pageId)?.groupBy === property.id })),
             ]),
+        ...D.OPEN_INS.map(openIn => { const target = viewById(model, picker.pageId); return { value: `open:${openIn}`, label: D.OPEN_IN_LABEL[openIn], group: 'Open pages in', isChecked: target !== undefined && target !== null && D.openInOf(target) === openIn } }),
         { value: 'duplicate', label: 'Duplicate view' },
         ...((model.page?.database?.views.length ?? 0) > 1 ? [{ value: 'delete', label: 'Delete view' }] : []),
       ]
@@ -795,6 +804,9 @@ const selectedIds = (cell: CellTarget): ReadonlyArray<string> => {
 }
 
 /** Opens a cell: typed cells get an input, option and person cells a picker. */
+/** Cells of the peeked row are the peek's; the table's copy stays put. */
+const scopeOf = (model: Model, rowId: string): string => (model.db.peek === rowId ? PEEK_SCOPE : '')
+
 const openCell = (model: Model, rowId: string, propertyId: string): UpdateReturn => {
   const cell = cellOf(model, rowId, propertyId)
   if (cell === null || !cell.isEditable) return { model }
@@ -803,9 +815,9 @@ const openCell = (model: Model, rowId: string, propertyId: string): UpdateReturn
   if (property === null) return { model }
   switch (property.type._tag) {
     case 'Select': case 'Status':
-      return { model: withPicker(model, openPicker('cell', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId))) }
+      return { model: withPicker(model, openPicker('cell', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId, scopeOf(model, rowId)))) }
     case 'MultiSelect': case 'Person':
-      return { model: withPicker(model, openPicker('cells', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId))) }
+      return { model: withPicker(model, openPicker('cells', cellTarget(rowId, propertyId), cellAnchor(rowId, propertyId, scopeOf(model, rowId)))) }
     case 'Checkbox':
     {
       const value = D.valueOf(property, cell.row)
@@ -1082,6 +1094,7 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
           const [kind, rest = ''] = [value.slice(0, value.indexOf(':')), value.slice(value.indexOf(':') + 1)]
           if (kind === 'layout') return S.is(D.Layout)(rest) ? changeDb(model, page, { _tag: 'SetLayout', viewId: target.id, layout: rest }) : { model: closed }
           if (kind === 'group') return changeDb(model, page, { _tag: 'SetGroupBy', viewId: target.id, propertyId: rest === '' ? null : rest })
+          if (kind === 'open') return S.is(D.OpenIn)(rest) ? changeDb(model, page, { _tag: 'SetOpenIn', viewId: target.id, openIn: rest }) : { model: closed }
           if (kind === 'date') return changeDb(model, page, { _tag: 'SetDateBy', viewId: target.id, propertyId: rest })
           return { model: closed }
         }
@@ -1108,6 +1121,14 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       return model.page?.database?.views.some(view => view.id === message.viewId) === true ? { model: withDb({ ...model, picker: null }, { viewId: message.viewId, editing: null, datePick: null }) } : { model }
     case 'ClickedViewMenu':
       return editableDatabase(model)?.database.views.some(view => view.id === message.viewId) === true ? { model: withPicker(model, openPicker('view', message.viewId, viewAnchor(message.viewId))) } : { model }
+    case 'ClickedPeek': {
+      const page = model.page
+      const view = page?.database == null ? null : activeView(page.database, model.db)
+      if (view === null || D.openInOf(view) === 'full' || !model.rows.some(row => row.id === message.rowId)) return { model }
+      return { model: focusOn(withDb({ ...model, picker: null }, { peek: message.rowId, editing: null, datePick: null }), '#peek-close') }
+    }
+    case 'ClosedPeek':
+      return { model: withDb({ ...model, picker: null }, { peek: null, editing: null, datePick: null }) }
     case 'ClickedAddFilter': {
       const page = editableDatabase(model)
       const view = page === null ? null : activeView(page.database, model.db)
@@ -1321,7 +1342,7 @@ const DATABASE_TAGS = [
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
-  'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts',
+  'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts', 'ClickedPeek', 'ClosedPeek',
 ] as const
 type PageMessage = Exclude<Message, { _tag: (typeof DATABASE_TAGS)[number] }>
 const isPageMessage = (message: Message): message is PageMessage => !(DATABASE_TAGS as ReadonlyArray<string>).includes(message._tag)
@@ -1548,6 +1569,8 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   addFilter: Message.ClickedAddFilter(),
   filter: filterId => Message.ClickedFilter({ filterId }),
   sorts: Message.ClickedSorts(),
+  peek: rowId => Message.ClickedPeek({ rowId }),
+  closePeek: Message.ClosedPeek(),
 }
 
 const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.text.length === 0 && entry.kind._tag === 'Paragraph')
@@ -1562,7 +1585,8 @@ const startView = (h: HtmlBuilder<Message>): Html =>
 /** The database of a database page, or the row's properties and blocks of any other page. */
 const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
   const isEditable = !model.isInTrash && !page.isLocked
-  const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES }
+  const view = page.database === null ? null : activeView(page.database, model.db)
+  const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES, scope: '', isPeeking: view !== null && D.openInOf(view) !== 'full' }
   if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: model.rows }, h)]
   return [
     ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, rowEntryOf(page), { ...context, isEditable: !model.isInTrash }, h)]),

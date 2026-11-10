@@ -84,6 +84,11 @@ export type Filter = typeof Filter.Type
 export const Sort = S.Struct({ propertyId: S.String, isDescending: S.Boolean })
 export type Sort = typeof Sort.Type
 
+export const OPEN_INS = ['side', 'center', 'full'] as const
+export const OpenIn = S.Literals(OPEN_INS)
+export type OpenIn = typeof OpenIn.Type
+export const OPEN_IN_LABEL: Readonly<Record<OpenIn, string>> = { side: 'Side peek', center: 'Center peek', full: 'Full page' }
+
 export const DatabaseView = S.Struct({
   id: S.String,
   name: S.String,
@@ -96,8 +101,12 @@ export const DatabaseView = S.Struct({
   hidden: S.Array(S.String),
   /** The date property a calendar places rows by. */
   dateBy: S.NullOr(S.String),
+  /** How its rows open; side peek when missing. */
+  openIn: S.optionalKey(OpenIn),
 })
 export type DatabaseView = typeof DatabaseView.Type
+
+export const openInOf = (view: DatabaseView): OpenIn => view.openIn ?? 'side'
 
 export const Database = S.Struct({ properties: S.Array(Property), views: S.Array(DatabaseView) })
 export type Database = typeof Database.Type
@@ -468,6 +477,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetFilter', { viewId: S.String, filterId: S.String, operator: Operator, value: S.String }),
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
+  S.TaggedStruct('SetOpenIn', { viewId: S.String, openIn: OpenIn }),
   S.TaggedStruct('MoveSort', { viewId: S.String, propertyId: S.String }),
   S.TaggedStruct('SetGroupBy', { viewId: S.String, propertyId: S.NullOr(S.String) }),
   S.TaggedStruct('SetDateBy', { viewId: S.String, propertyId: S.String }),
@@ -610,6 +620,8 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
         const sort = { propertyId: change.propertyId, isDescending: change.isDescending }
         return { ...view, sorts: existing < 0 ? [...others, sort] : view.sorts.map(entry => (entry.propertyId === change.propertyId ? sort : entry)) }
       })
+    case 'SetOpenIn':
+      return withView(change.viewId, view => ({ ...view, openIn: change.openIn }))
     case 'MoveSort':
       return withView(change.viewId, view => {
         const index = view.sorts.findIndex(sort => sort.propertyId === change.propertyId)

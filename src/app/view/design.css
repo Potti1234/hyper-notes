@@ -228,3 +228,6 @@
   .nb-db-day:hover .nb-db-day-add { opacity: 1; }
 }
 .nb-db-group { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 4px 4px; font-size: 14px; border-bottom: 1px solid var(--border); }
+.nb-db-peek { position: fixed; top: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; width: min(680px, 94vw); background: var(--background); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgb(0 0 0 / 0.08); }
+.nb-db-peek[data-peek="center"] { top: 6vh; bottom: 6vh; left: 50%; right: auto; width: min(960px, 94vw); transform: translateX(-50%); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.18); }
+.nb-db-backdrop { position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / 0.3); }

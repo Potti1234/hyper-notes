@@ -28,6 +28,8 @@ export const RowEntry = S.Struct({
   createdBy: S.String,
   updatedAt: S.Number,
   updatedBy: S.String,
+  /** The start of the row page's text, for gallery cards and peeks. */
+  preview: S.String,
 })
 export type RowEntry = typeof RowEntry.Type
 
@@ -52,18 +54,21 @@ export const DatabaseUi = S.Struct({
   dragging: S.NullOr(S.String),
   dropOn: S.NullOr(S.String),
   renaming: S.NullOr(S.Struct({ propertyId: S.String, name: S.String })),
+  /** The row open in a side or center peek. */
+  peek: S.NullOr(S.String),
 })
 export type DatabaseUi = typeof DatabaseUi.Type
 
-export const emptyUi: DatabaseUi = { viewId: null, query: null, editing: null, datePick: null, month: null, dragging: null, dropOn: null, renaming: null }
+export const emptyUi: DatabaseUi = { viewId: null, query: null, editing: null, datePick: null, month: null, dragging: null, dropOn: null, renaming: null, peek: null }
 
 export const CELL_INPUT_ID = 'cell-input'
 export const PROPERTY_NAME_ID = 'property-name'
 export const DB_SEARCH_ID = 'database-search'
 
-export const cellId = (rowId: string, propertyId: string) => `cell-${rowId}-${propertyId}`
+export const PEEK_SCOPE = 'peek-'
+export const cellId = (rowId: string, propertyId: string, scope = '') => `${scope}cell-${rowId}-${propertyId}`
 export const headerAnchor = (propertyId: string) => `--prop-${propertyId}`
-export const cellAnchor = (rowId: string, propertyId: string) => `--cell-${rowId}-${propertyId}`
+export const cellAnchor = (rowId: string, propertyId: string, scope = '') => `--${scope}cell-${rowId}-${propertyId}`
 export const viewAnchor = (viewId: string) => `--view-${viewId}`
 export const ADD_VIEW_ANCHOR = '--add-view'
 export const ADD_PROPERTY_ANCHOR = '--add-property'
@@ -137,6 +142,8 @@ export type DatabaseMessages<Msg> = Readonly<{
   addFilter: Msg
   filter: (filterId: string) => Msg
   sorts: Msg
+  peek: (rowId: string) => Msg
+  closePeek: Msg
 }>
 
 export type CellContext<Msg> = Readonly<{
@@ -145,6 +152,10 @@ export type CellContext<Msg> = Readonly<{
   today: string
   isEditable: boolean
   msgs: DatabaseMessages<Msg>
+  /** Prefixes cell ids, so a peek can show a row the table shows too. */
+  scope: string
+  /** Open buttons peek instead of going to the row page. */
+  isPeeking: boolean
 }>
 
 const chips = <Msg>(property: D.Property, row: RowEntry, h: HtmlBuilder<Msg>): ReadonlyArray<Html> => {
@@ -187,7 +198,7 @@ export const formatDay = (day: string): string => new Date(`${day}T00:00:00Z`).t
 export const cellView = <Msg>(property: D.Property | null, row: RowEntry, context: CellContext<Msg>, h: HtmlBuilder<Msg>): Html => {
   const { ui, msgs } = context
   const propertyId = property?.id ?? D.TITLE
-  const id = cellId(row.id, propertyId)
+  const id = cellId(row.id, propertyId, context.scope)
   const isEditable = context.isEditable && !row.isLocked && (property === null || !isComputed(property))
   const editing = ui.editing?.rowId === row.id && ui.editing.propertyId === propertyId ? ui.editing : null
   if (editing !== null && isEditable) {
@@ -216,12 +227,14 @@ export const cellView = <Msg>(property: D.Property | null, row: RowEntry, contex
   }
   const content = shown(property, row, context.people, h)
   const isUrl = property?.type._tag === 'Url' && content.length > 0
-  return box({ class: 'group/cell relative flex min-h-8 w-full items-center', style: { anchorName: cellAnchor(row.id, propertyId) }, children: [
+  return box({ class: 'group/cell relative flex min-h-8 w-full items-center', style: { anchorName: cellAnchor(row.id, propertyId, context.scope) }, children: [
       box({ as: 'button', id, class: cn('flex min-h-8 w-full min-w-0 flex-wrap items-center gap-1 px-2 py-1 text-left', isEditable ? 'cursor-text hover:bg-accent/60' : 'cursor-default', property === null && 'font-medium'),
         attributes: [h.Type('button'), h.DataAttribute('cell', id), h.AriaLabel(`${property?.name ?? 'Name'}: ${D.textOf(property, row, context.people) || 'empty'}`), ...(isEditable ? [h.OnClick(msgs.cell(row.id, propertyId))] : [])],
         children: property === null ? [box({ as: 'span', class: 'flex min-w-0 items-center gap-1.5', children: [...(row.icon === '' ? [] : [pageIcon(row.icon, h)]), box({ as: 'span', class: 'min-w-0 truncate', children: content }, h)] }, h)] : content }, h),
       ...(property === null
-        ? [box({ class: 'absolute top-1 right-1 opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100', children: [link({ href: `/p/${row.id}`, children: ['Open'], label: `Open ${row.title === '' ? 'Untitled' : row.title}` }, h)] }, h)]
+        ? [box({ class: 'absolute top-1 right-1 opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100', children: [context.isPeeking
+            ? button({ variant: 'outline', size: 'compact', id: `open-${row.id}`, ariaLabel: `Open ${row.title === '' ? 'Untitled' : row.title}`, onClick: msgs.peek(row.id), children: ['Open'] }, h)
+            : link({ href: `/p/${row.id}`, children: ['Open'], label: `Open ${row.title === '' ? 'Untitled' : row.title}` }, h)] }, h)]
         : isUrl ? [box({ class: 'absolute top-1 right-1 opacity-0 group-hover/cell:opacity-100', children: [link({ href: D.textOf(property, row, context.people), target: '_blank', children: [Icon.arrowUpRight({ class: 'size-3.5' }, h)], label: 'Open link' }, h)] }, h)]
         : []),
     ] }, h)
@@ -353,10 +366,13 @@ export const dayOf = (property: D.Property, row: RowEntry): string | null => {
 const shownOn = (view: D.DatabaseView, database: D.Database): ReadonlyArray<D.Property> =>
   database.properties.filter(property => !view.hidden.includes(property.id) && property.id !== view.groupBy)
 
-const titleLink = <Msg>(row: RowEntry, h: HtmlBuilder<Msg>): Html =>
-  link({ href: `/p/${row.id}`, label: `Open ${row.title === '' ? 'Untitled' : row.title}`, children: [
-      box({ as: 'span', class: 'flex min-w-0 items-center gap-1.5 font-medium', children: [...(row.icon === '' ? [] : [pageIcon(row.icon, h)]), box({ as: 'span', class: 'min-w-0 truncate', children: shown(null, row, [], h) }, h)] }, h),
-    ] }, h)
+const titleLink = <Msg>(row: RowEntry, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
+  const label = `Open ${row.title === '' ? 'Untitled' : row.title}`
+  const title = box({ as: 'span', class: 'flex min-w-0 items-center gap-1.5 font-medium', children: [...(row.icon === '' ? [] : [pageIcon(row.icon, h)]), box({ as: 'span', class: 'min-w-0 truncate', children: shown(null, row, [], h) }, h)] }, h)
+  return props.isPeeking
+    ? box({ as: 'button', class: 'flex min-w-0 text-left hover:underline', attributes: [h.Type('button'), h.AriaLabel(label), h.DataAttribute('open', row.id), h.OnClick(props.msgs.peek(row.id))], children: [title] }, h)
+    : link({ href: `/p/${row.id}`, label, children: [title] }, h)
+}
 
 /** The non-empty values of a row's shown properties, for cards and list rows. */
 const values = <Msg>(properties: ReadonlyArray<D.Property>, row: RowEntry, people: ReadonlyArray<D.Person>, h: HtmlBuilder<Msg>): ReadonlyArray<Html> =>
@@ -375,8 +391,8 @@ const dropAttributes = <Msg>(key: string, props: DatabaseProps<Msg>, h: HtmlBuil
 
 const card = <Msg>(view: D.DatabaseView, row: RowEntry, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>, isGallery = false): Html =>
   box({ as: 'article', class: cn(DB_VIEW.card, props.ui.dragging === row.id && DB_VIEW.dragged), attributes: [h.DataAttribute('row', row.id), ...dragAttributes(row, props, h)], children: [
-      ...(isGallery ? [box({ class: DB_VIEW.preview, children: row.icon === '' ? [Icon.icon('file-text', { class: 'size-8' }, h)] : [pageIcon(row.icon, h)] }, h)] : []),
-      box({ class: 'flex flex-col gap-1 p-2', children: [titleLink(row, h), ...values(shownOn(view, props.database), row, props.people, h)] }, h),
+      ...(isGallery ? [box({ class: DB_VIEW.preview, children: row.preview !== '' ? [box({ as: 'p', class: 'line-clamp-5 self-start p-3 text-left text-[12px] text-muted-foreground', children: [row.preview] }, h)] : row.icon === '' ? [Icon.icon('file-text', { class: 'size-8' }, h)] : [pageIcon(row.icon, h)] }, h)] : []),
+      box({ class: 'flex flex-col gap-1 p-2', children: [titleLink(row, props, h), ...values(shownOn(view, props.database), row, props.people, h)] }, h),
     ] }, h)
 
 const boardView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
@@ -398,7 +414,7 @@ const boardView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
 const listView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
   box({ class: 'flex flex-col', attributes: [h.Id('database-list'), h.DataAttribute('layout', 'list')], children: [
       ...grouped(view, rows, props, h, row => box({ class: DB_VIEW.line, attributes: [h.DataAttribute('row', row.id)], children: [
-          box({ class: 'min-w-0 flex-1', children: [titleLink(row, h)] }, h),
+          box({ class: 'min-w-0 flex-1', children: [titleLink(row, props, h)] }, h),
           box({ class: 'flex shrink-0 items-center gap-3', children: values(shownOn(view, props.database), row, props.people, h) }, h),
         ] }, h)),
       ...(props.isEditable ? [box({ class: 'flex', children: [button({ variant: 'quiet', size: 'compact', id: 'new-row', onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h)] }, h)] : []),
@@ -434,7 +450,7 @@ const calendarView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, 
                   ...(canMove ? [box({ class: DB_VIEW.dayAdd, children: [button({ variant: 'quiet', size: 'icon-sm', id: `new-on-${day}`, ariaLabel: `New page on ${formatDay(day)}`, title: 'New page', onClick: props.msgs.newOnDay(day), children: [Icon.plus({ class: 'size-3.5' }, h)] }, h)] }, h)] : [box({ children: [] }, h)]),
                   box({ as: 'span', class: cn('px-1 text-[12px]', day === props.today ? DB_VIEW.today : 'text-muted-foreground'), children: [String(Number(day.slice(8)))] }, h),
                 ] }, h),
-              ...rows.filter(row => dayOf(property, row) === day).map(row => box({ class: cn(DB_VIEW.event, props.ui.dragging === row.id && DB_VIEW.dragged), attributes: [h.DataAttribute('row', row.id), ...(canMove ? dragAttributes(row, props, h) : [])], children: [titleLink(row, h)] }, h)),
+              ...rows.filter(row => dayOf(property, row) === day).map(row => box({ class: cn(DB_VIEW.event, props.ui.dragging === row.id && DB_VIEW.dragged), attributes: [h.DataAttribute('row', row.id), ...(canMove ? dragAttributes(row, props, h) : [])], children: [titleLink(row, props, h)] }, h)),
             ] }, h)),
         ] }, h),
     ] }, h)
@@ -455,6 +471,8 @@ export const databaseView = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>
   const { database, ui, msgs } = props
   const view = activeView(database, ui)
   const rows = view === null ? [] : D.rowsOf(database, view, props.rows, props.people, ui.query ?? '')
+  const peeked = view === null || ui.peek === null ? undefined : props.rows.find(row => row.id === ui.peek)
+  const behind = peeked === undefined ? props : { ...props, ui: { ...ui, editing: null, datePick: null } }
   return box({ class: 'mt-6 flex flex-col', attributes: [h.Id('database')], children: [
       box({ class: 'flex items-center gap-1 border-b pb-1', children: [
           box({ as: 'nav', class: 'flex min-w-0 flex-1 items-center gap-0.5', attributes: [h.AriaLabel('Views')], children: [
@@ -477,11 +495,33 @@ export const databaseView = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>
           ...(props.isEditable ? [button({ variant: 'default', size: 'compact', id: 'database-new', onClick: msgs.newRow, children: ['New'] }, h)] : []),
         ] }, h),
       ...(view === null || (view.filters.length === 0 && view.sorts.length === 0) ? [] : [filterBar(view, props, h)]),
-      ...(view === null ? [] : [layoutView(view, rows, props, h)]),
+      ...(view === null ? [] : [layoutView(view, rows, behind, h)]),
+      ...(view === null || peeked === undefined ? [] : peekView(D.openInOf(view) === 'center' ? 'center' : 'side', peeked, props, h)),
     ] }, h)
 }
 
 /** A row's own page: its properties under the title. */
+/** A row opened over its database: its title and properties, editable in place. */
+const peekView = <Msg>(mode: 'side' | 'center', row: RowEntry, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): ReadonlyArray<Html> => {
+  const context = { ...props, scope: PEEK_SCOPE, isPeeking: false }
+  const title = row.title === '' ? 'Untitled' : row.title
+  return [
+    ...(mode === 'center' ? [box({ class: DB_VIEW.backdrop, attributes: [h.DataAttribute('peek-backdrop', ''), h.OnClick(props.msgs.closePeek)], children: [] }, h)] : []),
+    box({ class: DB_VIEW.peek, attributes: [h.Id('row-peek'), h.Role('dialog'), h.AriaLabel(title), h.DataAttribute('peek', mode), h.DataAttribute('row', row.id),
+        h.OnKeyDownPreventDefault(key => (key === 'Escape' && props.ui.editing === null && props.ui.datePick === null ? Option.some(props.msgs.closePeek) : Option.none()))], children: [
+        box({ class: 'flex items-center gap-1 px-3 py-2', children: [
+            button({ variant: 'ghost', size: 'icon-sm', id: 'peek-close', ariaLabel: 'Close', onClick: props.msgs.closePeek, children: [Icon.icon('x', { class: 'size-4' }, h)] }, h),
+            link({ href: `/p/${row.id}`, label: 'Open as page', children: [Icon.icon('maximize-2', { class: 'size-3.5' }, h), 'Open as page'] }, h),
+          ] }, h),
+        box({ class: 'min-h-0 flex-1 overflow-y-auto px-12 pt-6 pb-16', children: [
+            box({ class: 'text-[28px] leading-tight', attributes: [h.Id('peek-title')], children: [cellView(null, row, context, h)] }, h),
+            propertiesView({ id: props.pageId, title: '', database: props.database }, row, context, h),
+            box({ as: 'p', class: 'whitespace-pre-wrap text-[15px] text-muted-foreground', attributes: [h.Id('peek-body')], children: [row.preview === '' ? 'This page is empty. Open it as a page to write in it.' : row.preview] }, h),
+          ] }, h),
+      ] }, h),
+  ]
+}
+
 export const propertiesView = <Msg>(parent: ParentDatabase, row: RowEntry, context: CellContext<Msg>, h: HtmlBuilder<Msg>): Html =>
   box({ class: 'mt-2 mb-4 flex flex-col border-b pb-3', attributes: [h.Id('row-properties'), h.DataAttribute('database', parent.id)], children: parent.database.properties.map(property =>
       box({ class: 'flex min-h-8 items-start text-[14px]', attributes: [h.DataAttribute('property', property.id)], children: [

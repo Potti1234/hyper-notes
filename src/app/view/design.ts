@@ -69,6 +69,8 @@ export const DB_VIEW = {
   today: 'nb-db-today',
   event: 'nb-db-event',
   group: 'nb-db-group',
+  peek: 'nb-db-peek',
+  backdrop: 'nb-db-backdrop',
 } as const
 
 export const DB_GRID = {
