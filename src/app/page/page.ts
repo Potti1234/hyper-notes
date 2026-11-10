@@ -4,7 +4,7 @@ import type { Document, Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import * as Navigation from 'foldkit/navigation'
 
-import { type Program, region } from '@hyper-effect/core'
+import { type Program, keyBindings, region } from '@hyper-effect/core'
 import * as Island from '@hyper-effect/island'
 
 import * as Icon from '@/lib/icon'
@@ -43,6 +43,9 @@ export type PageEntry = typeof PageEntry.Type
 export const View = S.Literals(['page', 'trash', 'empty'])
 export type View = typeof View.Type
 
+/** Focus to move after the next morph; a new `seq` asks again. */
+export const FocusRequest = S.Struct({ selector: S.String, seq: S.Number })
+
 export const Model = S.Struct({
   me: Member,
   view: View,
@@ -59,6 +62,8 @@ export const Model = S.Struct({
   picker: S.NullOr(Picker),
   titleDraft: S.NullOr(S.String),
   notice: S.NullOr(S.String),
+  focus: S.NullOr(FocusRequest),
+  seq: S.Number,
 })
 export type Model = typeof Model.Type
 
@@ -135,6 +140,14 @@ export const CreatePage = Command.define('CreatePage', {
       Effect.map(page => Message.SucceededCreate({ id: page.id })),
       Effect.catchTag('InvalidChange', ({ reason }) => failed(reason)),
     ),
+})
+
+/** Moves focus after the next morph: forwarded as a focus action (see
+ *  `clientCommands`). The page asks for focus by setting `model.focus`. */
+export const FocusElement = Command.define('FocusElement', {
+  args: { selector: S.String },
+  messages: [Message.CompletedBrowserAction],
+  execute: () => Effect.succeed(Message.CompletedBrowserAction()),
 })
 
 export const SaveTitle = Command.define('SaveTitle', {
@@ -256,7 +269,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, picker: null, titleDraft: null, notice: null },
+  model: { ...flags, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -294,6 +307,11 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
   }
 }
 
+const focusOn = (model: Model, selector: string): Model => ({ ...model, seq: model.seq + 1, focus: { selector, seq: model.seq + 1 } })
+
+/** Opens the picker with its query focused, so typing and Esc go to it. */
+const withPicker = (model: Model, picker: Picker): Model => focusOn({ ...model, picker }, `#${PICKER_INPUT_ID}`)
+
 const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
   const closed = { ...model, picker: null }
   const actorId = model.me.id
@@ -305,7 +323,7 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
       switch (value) {
         case 'favorite': return { model: closed, commands: [SetFavorite({ pageId: picker.pageId, isFavorite: !model.nav.favorites.some(row => row.id === picker.pageId), actorId })] }
         case 'duplicate': return { model: closed, commands: [DuplicatePage({ pageId: picker.pageId, actorId })] }
-        case 'move': return { model: { ...model, picker: openPicker('move', picker.pageId, picker.anchor) } }
+        case 'move': return { model: withPicker(model, openPicker('move', picker.pageId, picker.anchor)) }
         case 'trash': return { model: closed, commands: [TrashPage({ pageId: picker.pageId, actorId })] }
         case 'open': return { model: closed, commands: [LoadUrl({ url: `/p/${picker.pageId}` })] }
         default: return { model: closed }
@@ -319,15 +337,16 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
   }
 }
 
-export const update = (model: Model, message: Message): UpdateReturn =>
+/** The page's update without the focus wrapper, for Story tests. */
+export const updateModel = (model: Model, message: Message): UpdateReturn =>
   M.value(message).pipe(
     M.withReturnType<UpdateReturn>(),
     M.tagsExhaustive({
       ClickedToggle: ({ pageId, isOpen }) => (isKnown(model, pageId) ? { model, commands: [SetExpanded({ pageId, isOpen, actorId: model.me.id })] } : { model }),
       ClickedAdd: ({ parentId, section }) =>
         parentId !== null && !isKnown(model, parentId) ? { model } : { model, commands: [CreatePage({ parentId, section, actorId: model.me.id })] },
-      ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: { ...model, picker: openPicker('page', pageId, anchor) } } : { model }),
-      ClickedSearch: () => ({ model: { ...model, picker: openPicker('search', '', null) } }),
+      ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: withPicker(model, openPicker('page', pageId, anchor)) } : { model }),
+      ClickedSearch: () => ({ model: withPicker(model, openPicker('search', '', null)) }),
       ChangedPickerQuery: ({ query }) => (model.picker === null ? { model } : { model: { ...model, picker: { ...model.picker, query: query.slice(0, 200), active: 0 } } }),
       PressedPickerKey: ({ key }) => {
         if (model.picker === null) return { model }
@@ -368,6 +387,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       CompletedBrowserAction: () => ({ model }),
     }),
   )
+
+/** Every new focus request (`focusOn`) becomes a forwarded focus. */
+export const update = (model: Model, message: Message): UpdateReturn => {
+  const result = updateModel(model, message)
+  const focus = result.model.focus
+  return focus !== null && focus.seq !== model.focus?.seq
+    ? { ...result, commands: [...(result.commands ?? []), FocusElement({ selector: focus.selector })] }
+    : result
+}
 
 // SUBSCRIPTION
 
@@ -420,7 +448,9 @@ const trashBanner = (page: Page, h: HtmlBuilder<Message>): Html =>
 const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html =>
   box({ as: 'article', class: 'mx-auto w-full max-w-[708px] px-6 pt-20 pb-40', attributes: [h.Id('page-body')], children: [
       box({ class: 'mb-2', children: [pageIcon(page.icon, h, 'lg')] }, h),
-      input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'inline-lg', onInput: title => Message.ChangedTitle({ title }) }, h),
+      box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [
+          input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'inline-lg', onInput: title => Message.ChangedTitle({ title }) }, h),
+        ] }, h),
       editorView(model, page, h),
     ] }, h)
 
@@ -450,6 +480,11 @@ const trashView = (model: Model, h: HtmlBuilder<Message>): Html =>
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: `${model.view === 'trash' ? 'Trash' : model.page === null ? 'hypernotes' : titleOf(model.page)} · hypernotes`,
   body: pageRoot({ isDark: model.me.isDark, theme: model.me.theme, children: [
+      // Ctrl+K inside the editor makes a link (the editor takes it first), so search also has Ctrl+P.
+      keyBindings(h, [
+        { keys: 'Mod+K', message: Message.ClickedSearch(), isEnabled: model.picker === null },
+        { keys: 'Mod+P', message: Message.ClickedSearch(), isEnabled: model.picker === null, whileTyping: 'Allow' },
+      ]),
       region(h, {
         id: 'sidebar',
         deps: [model.me, model.nav, model.pageId, model.view],
@@ -523,6 +558,7 @@ export const program: Program<Model, Message, ClientMessage, Flags, Workspace> =
   subscriptions,
   clientCommands: {
     LoadUrl: ({ url }) => (typeof url === 'string' ? { load: url } : undefined),
+    FocusElement: ({ selector }) => (typeof selector === 'string' ? { focus: selector } : undefined),
   },
   snapshotDeps: model => [model.picker, model.titleDraft, model.notice],
 }

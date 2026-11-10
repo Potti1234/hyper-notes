@@ -145,9 +145,11 @@ const Sync = Command.define('Sync', {
       writtenDocs.set(pageId, editor.doc)
       // The model moved or the blocks re-rendered: write the selection. Otherwise the browser moved the caret: read it.
       const isWriting = isNew || isRerendered || dom === null
+      // Never pull focus back from the title, a prompt or the page around the editor.
+      const isFocused = root.contains(document.activeElement) && document.activeElement?.closest('[data-overlay]') == null
       if (isWriting) {
         written.set(pageId, editor.selection)
-        if (isNew || isRerendered || editor.selection._tag === 'TextSelection') writeSelection(root, editor.selection)
+        if (isFocused && (isNew || isRerendered || editor.selection._tag === 'TextSelection')) writeSelection(root, editor.selection)
       }
       if ((pending.get(pageId) ?? 0) > 0) return Message.CompletedSync()
       const moves = queuedMoves.get(pageId) ?? []
@@ -643,7 +645,9 @@ const EditPage = Mount.defineStream('EditPage', {
             if (entry !== null) return offer(Message.ChoseMenuItem({ index: Number(entry.getAttribute('data-menu-item')) }))
             const control = target.closest('[data-action]')
             const action = control?.getAttribute('data-action') ?? ''
-            if (control !== null && action !== 'handle') return offer(Message.ClickedControl({ action, blockId: control.getAttribute('data-block') ?? '' }))
+            // The handle opens its menu on pointerup (unless it dragged); its click must not close it.
+            if (action === 'handle') return
+            if (control !== null) return offer(Message.ClickedControl({ action, blockId: control.getAttribute('data-block') ?? '' }))
             const link = target.closest('a[data-link]')
             if (link !== null && (mouse.ctrlKey || mouse.metaKey)) window.open(link.getAttribute('href') ?? '', '_blank', 'noopener')
             if (target.closest('[data-overlay]') === null && state()?.overlay._tag !== 'Closed') offer(Message.PressedMenuKey({ key: 'escape' }))
