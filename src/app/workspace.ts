@@ -1,6 +1,6 @@
 import { Data, Effect, Schema as S } from 'effect'
 
-import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, type Member, type Page, type Section } from './domain'
+import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW } from './domain'
 import { copyWithIds } from './editor/blocks'
 import { type Block, Document } from './editor/schema'
 
@@ -17,11 +17,12 @@ export type WorkspaceData = Readonly<{
   favorites: ReadonlyArray<Favorite>
   expanded: ReadonlyArray<Expanded>
   comments: ReadonlyArray<Comment>
+  versions: ReadonlyArray<PageVersion>
   /** Password hashes by member id. They never leave the store. */
   passwords: Readonly<Record<string, string>>
 }>
 
-export const emptyData: WorkspaceData = { members: [], pages: [], favorites: [], expanded: [], comments: [], passwords: {} }
+export const emptyData: WorkspaceData = { members: [], pages: [], favorites: [], expanded: [], comments: [], versions: [], passwords: {} }
 
 export class InvalidChange extends Data.TaggedError('InvalidChange')<{ readonly reason: string }> {}
 
@@ -174,7 +175,41 @@ const isSafeBlock = (block: Block): boolean =>
   block.text.every(piece => piece._tag !== 'Text' || piece.marks.link === null || isSafeUrl(piece.marks.link)) &&
   block.children.every(isSafeBlock)
 
-export const updatePage = (pageId: string, patch: PagePatch, actorId: string): Op<Page, InvalidChange> => (data, { at }) =>
+// HISTORY
+
+const versionOf = (page: Page, id: string, at: number): PageVersion =>
+  ({ id, pageId: page.id, authorId: page.updatedBy, startedAt: at, at, title: page.title, icon: page.icon, content: page.content, isDemo: page.isDemo })
+
+const sameText = (before: Page, after: Page): boolean =>
+  before.title === after.title && before.icon === after.icon && (before.content === after.content || JSON.stringify(before.content) === JSON.stringify(after.content))
+
+/** Keeps the page as it is after an edit of its title, icon or blocks: in its
+ *  latest version while the same person keeps editing, else in a new one. The
+ *  first recorded edit also keeps what the page was before it. */
+export const recordVersion = (versions: ReadonlyArray<PageVersion>, before: Page, after: Page, context: OpContext): ReadonlyArray<PageVersion> => {
+  if (sameText(before, after)) return versions
+  const own = versions.filter(version => version.pageId === after.id)
+  const latest = own.at(-1)
+  if (latest !== undefined && latest.authorId === after.updatedBy && context.at - latest.startedAt < VERSION_WINDOW) {
+    const merged: PageVersion = { ...latest, at: context.at, title: after.title, icon: after.icon, content: after.content }
+    return versions.map(version => (version === latest ? merged : version))
+  }
+  const added = [...(latest === undefined ? [versionOf(before, context.id('version'), before.updatedAt)] : []), versionOf(after, context.id('version'), context.at)]
+  const dropped = new Set(own.length + added.length > MAX_VERSIONS ? own.slice(0, own.length + added.length - MAX_VERSIONS) : [])
+  return [...versions.filter(version => !dropped.has(version)), ...added]
+}
+
+/** Puts a page's title, icon and blocks back as a version had them. */
+export const restoreVersion = (versionId: string, actorId: string): Op<Page, InvalidChange> => (data, context) =>
+  Effect.gen(function* () {
+    const version = data.versions.find(entry => entry.id === versionId)
+    if (version === undefined) return yield* invalid('That version is gone.')
+    const page = yield* visiblePage(data, version.pageId, actorId)
+    if (page.isLocked) return yield* invalid('This page is locked.')
+    return yield* updatePage(page.id, { title: version.title, icon: version.icon, content: version.content }, actorId)(data, context)
+  })
+
+export const updatePage = (pageId: string, patch: PagePatch, actorId: string): Op<Page, InvalidChange> => (data, context) =>
   Effect.gen(function* () {
     const page = yield* visiblePage(data, pageId, actorId)
     if (isTrashed(data.pages, page)) return yield* invalid('This page is in the trash. Restore it to edit it.')
@@ -201,9 +236,9 @@ export const updatePage = (pageId: string, patch: PagePatch, actorId: string): O
       isLocked: patch.isLocked ?? page.isLocked,
       content,
       updatedBy: actorId,
-      updatedAt: at,
+      updatedAt: context.at,
     }
-    return [next, { ...data, pages: replacePages(data.pages, [next]) }] as const
+    return [next, { ...data, pages: replacePages(data.pages, [next]), versions: recordVersion(data.versions, page, next, context) }] as const
   })
 
 /** Moves a page into another (or to the top of a section), before a sibling
@@ -280,6 +315,7 @@ export const deletePage = (pageId: string, actorId: string): Op<number, InvalidC
       favorites: data.favorites.filter(row => !ids.has(row.pageId)),
       expanded: data.expanded.filter(row => !ids.has(row.pageId)),
       comments: data.comments.filter(row => !ids.has(row.pageId)),
+      versions: data.versions.filter(row => !ids.has(row.pageId)),
     }] as const
   })
 
@@ -378,6 +414,7 @@ export const addDemo = (demo: WorkspaceData): Op<boolean> => data => {
     favorites: [...data.favorites, ...demo.favorites],
     expanded: [...data.expanded, ...demo.expanded],
     comments: [...data.comments, ...demo.comments],
+    versions: [...data.versions, ...demo.versions],
     passwords: { ...data.passwords, ...demo.passwords },
   }] as const)
 }
@@ -399,6 +436,7 @@ export const clearDemo = (): Op<DemoCounts> => data => {
     favorites: data.favorites.filter(row => !demoMembers.has(row.memberId) && !demoPages.has(row.pageId)),
     expanded: data.expanded.filter(row => !demoMembers.has(row.memberId) && !demoPages.has(row.pageId)),
     comments: withoutOrphans(data.comments.filter(row => !row.isDemo && !demoMembers.has(row.authorId) && !demoPages.has(row.pageId))),
+    versions: data.versions.filter(row => !row.isDemo && !demoPages.has(row.pageId)),
     passwords: Object.fromEntries(Object.entries(data.passwords).filter(([memberId]) => !demoMembers.has(memberId))),
   }] as const)
 }

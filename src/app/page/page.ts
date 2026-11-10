@@ -21,7 +21,7 @@ import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import { Workspace, type WorkspaceState } from '../store'
-import { box, pageRoot } from '../view/design'
+import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
@@ -55,6 +55,17 @@ export const FocusRequest = S.Struct({ selector: S.String, seq: S.Number })
 export const CommentEntry = S.Struct({ ...Comment.fields, author: S.NullOr(Member) })
 export type CommentEntry = typeof CommentEntry.Type
 
+/** A version in the page history list (its blocks load when it is picked). */
+export const VersionEntry = S.Struct({ id: S.String, authorId: S.String, author: S.NullOr(Member), startedAt: S.Number, at: S.Number, title: S.String })
+export type VersionEntry = typeof VersionEntry.Type
+
+export const VersionPreview = S.Struct({ versionId: S.String, title: S.String, icon: S.String, content: BlockDocument })
+export type VersionPreview = typeof VersionPreview.Type
+
+/** The open history: the picked version, and its blocks once loaded. */
+export const History = S.Struct({ selectedId: S.NullOr(S.String), preview: S.NullOr(VersionPreview) })
+export type History = typeof History.Type
+
 /** The open comment box: a new discussion, a reply in one, or an edit. */
 export const Composer = S.Union([
   S.TaggedStruct('NewDiscussion', { text: S.String }),
@@ -76,6 +87,8 @@ export const Model = S.Struct({
   comments: S.Array(CommentEntry),
   composer: S.NullOr(Composer),
   isShowingResolved: S.Boolean,
+  versions: S.Array(VersionEntry),
+  history: S.NullOr(History),
   isFavorite: S.Boolean,
   isInTrash: S.Boolean,
   nav: Nav,
@@ -132,12 +145,19 @@ export const Message = defineMessageUnion({
   ClickedResolve: { threadId: S.String, isResolved: S.Boolean },
   ClickedDeleteComment: { commentId: S.String },
   ClickedShowResolved: {},
+  ClickedHistory: {},
+  ClickedCloseHistory: {},
+  ClickedVersion: { versionId: S.String },
+  ClickedRestoreVersion: { versionId: S.String },
+  GotVersion: { preview: VersionPreview },
+  MissedVersion: { versionId: S.String },
   GotPage: {
     me: Member,
     page: S.NullOr(Page),
     crumbs: S.Array(Crumb),
     backlinks: S.Array(Crumb),
     comments: S.Array(CommentEntry),
+    versions: S.Array(VersionEntry),
     isFavorite: S.Boolean,
     isInTrash: S.Boolean,
     nav: Nav,
@@ -186,6 +206,10 @@ export const ClientMessage = S.Union([
   Message.ClickedResolve,
   Message.ClickedDeleteComment,
   Message.ClickedShowResolved,
+  Message.ClickedHistory,
+  Message.ClickedCloseHistory,
+  Message.ClickedVersion,
+  Message.ClickedRestoreVersion,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -266,6 +290,23 @@ export const ResolveThread = Command.define('ResolveThread', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ threadId, isResolved, actorId }) =>
     Workspace.use(workspace => workspace.resolveThread(threadId, isResolved, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const LoadVersion = Command.define('LoadVersion', {
+  args: { versionId: S.String, actorId: S.String },
+  messages: [Message.GotVersion, Message.MissedVersion],
+  execute: ({ versionId, actorId }) =>
+    Workspace.use(workspace => workspace.version(versionId, actorId)).pipe(Effect.map(version =>
+      version === null
+        ? Message.MissedVersion({ versionId })
+        : Message.GotVersion({ preview: { versionId, title: version.title, icon: version.icon, content: version.content } }))),
+})
+
+export const RestoreVersion = Command.define('RestoreVersion', {
+  args: { versionId: S.String, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ versionId, actorId }) =>
+    Workspace.use(workspace => workspace.restoreVersion(versionId, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const SetExpanded = Command.define('SetExpanded', {
@@ -350,6 +391,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     crumbs: page === null ? [] : [...ancestorsOf(state.pages, page), page].map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
     backlinks: page === null ? [] : visible.filter(entry => entry.id !== page.id && !isTrashed(state.pages, entry) && B.mentionsPage(entry.content, page.id)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
     comments: page === null ? [] : state.comments.filter(comment => comment.pageId === page.id).map(comment => ({ ...comment, author: state.members.find(member => member.id === comment.authorId) ?? null })),
+    versions: page === null ? [] : state.versions.filter(version => version.pageId === page.id).map(({ id, authorId, startedAt, at, title }) => ({ id, authorId, author: state.members.find(member => member.id === authorId) ?? null, startedAt, at, title })),
     isFavorite: page !== null && state.favorites.some(row => row.memberId === memberId && row.pageId === page.id),
     isInTrash: page !== null && isTrashed(state.pages, page),
     nav: navOf(state, memberId),
@@ -362,14 +404,14 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.pages, b.people, b.trash])
+  JSON.stringify([a.crumbs, a.backlinks, a.comments, a.versions, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.backlinks, b.comments, b.versions, b.pages, b.people, b.trash])
 
 // INIT
 
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -428,6 +470,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'small', label: 'Small text', group: 'Page', isChecked: page.isSmallText },
         { value: 'full', label: 'Full width', group: 'Page', isChecked: page.isFullWidth },
         { value: 'lock', label: 'Lock page', group: 'Page', isChecked: page.isLocked },
+        { value: 'history', label: 'Page history', group: 'Page' },
         { value: 'favorite', label: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', group: 'Page' },
         { value: 'duplicate', label: 'Duplicate', group: 'Page', shortcut: 'Ctrl D' },
         { value: 'move', label: 'Move to', group: 'Page', shortcut: 'Ctrl Shift P' },
@@ -465,6 +508,7 @@ const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn =
       return { model: closed }
     }
     default: {
+      if (value === 'history') return openHistory(model)
       const font = FONTS.find(entry => `font:${entry}` === value)
       if (page.isLocked && value !== 'lock') return value === 'favorite' || value === 'duplicate' || value === 'move' ? choose(model, { ...picker, field: 'page' }, value) : { model: closed }
       if (font !== undefined) return change(model, page, { _tag: 'SetFont', font })
@@ -559,6 +603,29 @@ const submitComment = (model: Model): UpdateReturn => {
   }
 }
 
+// HISTORY
+
+export const HISTORY_ID = 'history-panel'
+
+/** Opens the history on the latest version, which starts loading. */
+const openHistory = (model: Model): UpdateReturn => {
+  if (model.page === null || model.isInTrash) return { model: { ...model, picker: null } }
+  const latest = model.versions.at(-1)
+  const opened = focusOn({ ...model, picker: null, history: { selectedId: latest?.id ?? null, preview: null } }, `#${HISTORY_ID}`)
+  return latest === undefined ? { model: opened } : { model: opened, commands: [LoadVersion({ versionId: latest.id, actorId: model.me.id })] }
+}
+
+const canRestore = (model: Model): boolean => model.page !== null && !model.isInTrash && !model.page.isLocked
+
+/** The open history after the page changed: closed with the page, and a
+ *  picked version that is gone is dropped. */
+const keepHistory = (model: Model): Model => {
+  const { history } = model
+  if (history === null) return model
+  if (model.page === null || model.isInTrash) return { ...model, history: null }
+  return history.selectedId === null || model.versions.some(version => version.id === history.selectedId) ? model : { ...model, history: { selectedId: null, preview: null } }
+}
+
 /** The page's update without the focus wrapper, for Story tests. */
 export const updateModel = (model: Model, message: Message): UpdateReturn =>
   M.value(message).pipe(
@@ -646,7 +713,19 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
       ClickedDeleteComment: ({ commentId }) =>
         ownComment(model, commentId) === undefined || !canComment(model) ? { model } : { model, commands: [DeleteComment({ commentId, actorId: model.me.id })] },
       ClickedShowResolved: () => ({ model: { ...model, isShowingResolved: !model.isShowingResolved } }),
-      GotPage: ({ _tag: _, ...slice }) => ({ model: keepComposer({ ...model, ...slice }) }),
+      ClickedHistory: () => openHistory(model),
+      ClickedCloseHistory: () => ({ model: { ...model, history: null } }),
+      ClickedVersion: ({ versionId }) =>
+        model.history === null || !model.versions.some(version => version.id === versionId)
+          ? { model }
+          : { model: { ...model, history: { selectedId: versionId, preview: model.history.preview } }, commands: [LoadVersion({ versionId, actorId: model.me.id })] },
+      GotVersion: ({ preview }) => (model.history?.selectedId === preview.versionId ? { model: { ...model, history: { ...model.history, preview } } } : { model }),
+      MissedVersion: ({ versionId }) => (model.history?.selectedId === versionId ? { model: { ...model, history: { selectedId: null, preview: null } } } : { model }),
+      ClickedRestoreVersion: ({ versionId }) =>
+        model.history === null || !canRestore(model) || !model.versions.some(version => version.id === versionId)
+          ? { model }
+          : { model: { ...model, history: null }, commands: [RestoreVersion({ versionId, actorId: model.me.id })] },
+      GotPage: ({ _tag: _, ...slice }) => ({ model: keepHistory(keepComposer({ ...model, ...slice })) }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
       SucceededTrash: () => ({ model }),
       FailedChange: ({ reason }) => ({ model: { ...model, notice: reason } }),
@@ -758,6 +837,41 @@ const backlinksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Htm
       ...(model.isBacklinksOpen ? model.backlinks.map(entry =>
         box({ as: 'a', class: 'flex items-center gap-1.5 rounded-md px-2 py-1 text-[14px] text-muted-foreground hover:bg-accent', attributes: [h.Href(`/p/${entry.id}`), h.DataAttribute('backlink', entry.id)], children: [pageIcon(entry.icon, h), entry.title] }, h)) : []),
     ] }, h)]
+}
+
+/** Page history: the picked version on the left, every version on the right. */
+const historyView = (model: Model, history: History, h: HtmlBuilder<Message>): Html => {
+  const preview = history.preview !== null && history.preview.versionId === history.selectedId ? history.preview : null
+  const props = { pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: model.people, crumbs: model.crumbs, isEditable: false, blockIdPrefix: 'version-block-' }
+  return box({ class: 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6', attributes: [h.Id('history')], children: [
+      box({ class: 'flex h-full max-h-[720px] w-full max-w-[1100px] min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-xl outline-none', attributes: [
+          h.Id(HISTORY_ID), h.Tabindex(-1), h.Role('dialog'), h.AriaLabel('Page history'),
+          h.OnKeyDownPreventDefault(key => (key === 'Escape' ? Option.some(Message.ClickedCloseHistory()) : Option.none())),
+        ], children: [
+          box({ class: 'min-w-0 flex-1 overflow-y-auto px-12 py-10', attributes: [h.Id('history-preview')], children: preview === null
+            ? [box({ as: 'p', class: 'text-muted-foreground', children: [history.selectedId === null ? 'No versions yet. They appear as the page is edited.' : 'Loading…'] }, h)]
+            : [
+                box({ as: 'h1', class: 'mb-4 flex min-w-0 items-center gap-2 text-[32px] font-bold', children: [...(preview.icon === '' ? [] : [preview.icon]), preview.title === '' ? 'Untitled' : preview.title] }, h),
+                box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('version-preview', preview.versionId)], children: [...renderDocument(preview.content, context(props), h)] }, h),
+              ] }, h),
+          box({ class: 'flex min-w-[260px] max-w-[260px] shrink-0 flex-col border-l border-border', children: [
+              box({ class: 'flex items-center justify-between px-3 py-2', children: [
+                  box({ as: 'span', class: 'text-[14px] font-medium', children: ['Page history'] }, h),
+                  button({ variant: 'ghost', size: 'icon-xs', id: 'close-history', ariaLabel: 'Close page history', onClick: Message.ClickedCloseHistory(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h),
+                ] }, h),
+              box({ class: 'flex min-h-0 flex-1 flex-col overflow-y-auto px-1', attributes: [h.Id('history-versions')], children: [...model.versions].reverse().map(version =>
+                  optionRow({ id: `version-${version.id}`, value: version.id, isActive: version.id === history.selectedId, onClick: Message.ClickedVersion({ versionId: version.id }), children: [
+                      box({ class: 'flex min-w-0 flex-col items-start', attributes: [h.DataAttribute('version', version.id)], children: [
+                          box({ as: 'span', class: 'text-[14px]', children: [formatAgo(version.at, model.now)] }, h),
+                          box({ as: 'span', class: 'text-[12px] text-muted-foreground', children: [version.author?.name ?? 'Someone'] }, h),
+                        ] }, h),
+                    ] }, h)) }, h),
+              box({ class: 'border-t border-border p-2', children: history.selectedId === null ? [] : [
+                  button({ size: 'compact', id: 'restore-version', isDisabled: preview === null || !canRestore(model), title: canRestore(model) ? 'Put the page back as this version had it' : 'Unlock the page to restore a version', onClick: Message.ClickedRestoreVersion({ versionId: history.selectedId }), children: ['Restore version'] }, h),
+                ] }, h),
+            ] }, h),
+        ] }, h),
+    ] }, h)
 }
 
 /** The comment box: Enter sends and Shift+Enter starts a new line
@@ -892,6 +1006,11 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                   : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
+      ...(model.history === null ? [] : [region(h, {
+        id: 'history',
+        deps: [model.history, model.versions, model.pages, model.people, model.crumbs, model.now, model.page?.isLocked ?? null, model.isInTrash],
+        render: () => historyView(model, model.history as History, h),
+      })]),
       ...(model.picker === null ? [] : [pickerView({
         picker: model.picker,
         items: pickerItems(model),

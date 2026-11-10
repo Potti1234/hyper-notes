@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { Clock, Context, Effect, Layer, type Scope, Semaphore, Stream, SubscriptionRef } from 'effect'
 
-import type { Comment, Member, Page, Section } from './domain'
+import type { Comment, Member, Page, PageVersion, Section } from './domain'
 import { hashPassword, verifyPassword } from './password'
 import {
   type DemoCounts,
@@ -14,6 +14,7 @@ import {
   addComment,
   addDemo,
   addMember,
+  canSee,
   clearDemo,
   createPage,
   deleteComment,
@@ -23,6 +24,7 @@ import {
   movePage,
   resolveThread,
   restorePage,
+  restoreVersion,
   setExpanded,
   setFavorite,
   setPreset,
@@ -47,6 +49,7 @@ export type WorkspaceState = Readonly<{
   favorites: WorkspaceData['favorites']
   expanded: WorkspaceData['expanded']
   comments: WorkspaceData['comments']
+  versions: WorkspaceData['versions']
 }>
 
 /** The data at one version, and the state pages see (without passwords). */
@@ -55,7 +58,7 @@ export type Snapshot = Readonly<{ version: number; data: WorkspaceData; state: W
 export const snapshotOf = (version: number, data: WorkspaceData): Snapshot => ({
   version,
   data,
-  state: { version, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments },
+  state: { version, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions },
 })
 
 export type Backend = Readonly<{
@@ -90,6 +93,8 @@ export class Workspace extends Context.Service<
     readonly addComment: (target: Readonly<{ pageId: string; threadId: string | null }>, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
     readonly editComment: (commentId: string, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
     readonly deleteComment: (commentId: string, actorId: string) => Effect.Effect<number, InvalidChange>
+    readonly restoreVersion: (versionId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly version: (versionId: string, actorId: string) => Effect.Effect<PageVersion | null>
     readonly resolveThread: (threadId: string, isResolved: boolean, actorId: string) => Effect.Effect<Comment, InvalidChange>
     /** Adds the demo content (false: it is there already). */
     readonly seedDemo: (demo: WorkspaceData) => Effect.Effect<boolean>
@@ -133,6 +138,12 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
   addComment: (target, text, actorId) => traced(backend, 'addComment', addComment(target, text, actorId)),
   editComment: (commentId, text, actorId) => traced(backend, 'editComment', editComment(commentId, text, actorId)),
   deleteComment: (commentId, actorId) => traced(backend, 'deleteComment', deleteComment(commentId, actorId)),
+  restoreVersion: (versionId, actorId) => traced(backend, 'restoreVersion', restoreVersion(versionId, actorId)),
+  version: (versionId, actorId) => Effect.map(backend.current, ({ data }) => {
+    const found = data.versions.find(entry => entry.id === versionId)
+    const page = found === undefined ? undefined : data.pages.find(entry => entry.id === found.pageId)
+    return found !== undefined && page !== undefined && canSee(page, actorId) ? found : null
+  }),
   resolveThread: (threadId, isResolved, actorId) => traced(backend, 'resolveThread', resolveThread(threadId, isResolved, actorId)),
   seedDemo: demo => traced(backend, 'seedDemo', addDemo(demo)),
   clearDemo: traced(backend, 'clearDemo', clearDemo()),

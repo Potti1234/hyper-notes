@@ -22,11 +22,13 @@ export type RenderContext = Readonly<{
   anchorId: string | null
   /** Bumped after IME composition, which edits text nodes behind the back of the renderer: re-creates them. */
   epoch: number
+  /** Element ids are `<prefix><block id>`; a second rendering on the same page (a version preview) needs its own. */
+  blockIdPrefix: string
 }>
 
 export const ANCHOR = '--nb-anchor'
 
-export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members: ReadonlyArray<MemberRef>; crumbs: ReadonlyArray<PageRef>; isEditable: boolean }>, selected: ReadonlyArray<string> = [], focusedId: string | null = null, anchorId: string | null = null, epoch = 0): RenderContext => ({
+export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members: ReadonlyArray<MemberRef>; crumbs: ReadonlyArray<PageRef>; isEditable: boolean; blockIdPrefix?: string }>, selected: ReadonlyArray<string> = [], focusedId: string | null = null, anchorId: string | null = null, epoch = 0): RenderContext => ({
   pages: new Map(props.pages.map(page => [page.id, page])),
   members: new Map(props.members.map(member => [member.id, member])),
   crumbs: props.crumbs,
@@ -35,6 +37,7 @@ export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members
   isEditable: props.isEditable,
   anchorId,
   epoch,
+  blockIdPrefix: props.blockIdPrefix ?? 'block-',
 })
 
 const COLOR_CLASS: Readonly<Record<Color, string>> = {
@@ -176,7 +179,7 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
       const items = B.headings(doc)
       return [h.nav([h.Class('nb-toc'), h.Attribute('contenteditable', 'false')], items.length === 0
         ? [h.span([h.Class('nb-muted')], ['Add headings to create a table of contents.'])]
-        : items.map(entry => h.a([h.Class(TOC_CLASS[entry.level]), h.Href(`#block-${entry.id}`)], [entry.text.map(piece => (piece._tag === 'Text' ? piece.text : '')).join('') || 'Untitled'])))]
+        : items.map(entry => h.a([h.Class(TOC_CLASS[entry.level]), h.Href(`#${ctx.blockIdPrefix}${entry.id}`)], [entry.text.map(piece => (piece._tag === 'Text' ? piece.text : '')).join('') || 'Untitled'])))]
     }
     case 'Breadcrumb': return [h.nav([h.Class('nb-breadcrumb'), h.Attribute('contenteditable', 'false')], ctx.crumbs.flatMap((crumb, at) => [
       ...(at === 0 ? [] : [h.span([h.Class('nb-muted')], ['/'])]),
@@ -210,7 +213,7 @@ export const renderBlock = <Msg>(target: Block, index: number, siblings: Documen
   const emptyToggle = (kind._tag === 'Toggle' || (kind._tag === 'Heading' && kind.isToggleable)) && isOpen(target) && children.length === 0
   return h.div(
     [
-      h.Id(`block-${target.id}`),
+      h.Id(`${ctx.blockIdPrefix}${target.id}`),
       h.Class(['nb-block', KIND_CLASS[kind._tag], kind._tag === 'Heading' ? HEADING_CLASS[kind.level] : '', ctx.selected.has(target.id) ? 'nb-selected' : '', colorClass(target.color)].filter(name => name !== '').join(' ')),
       h.Attribute('data-block-id', target.id),
       h.Attribute('data-kind', kind._tag),

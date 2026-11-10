@@ -98,6 +98,26 @@ export type Favorite = typeof Favorite.Type
 export const Expanded = S.Struct({ memberId: S.String, pageId: S.String })
 export type Expanded = typeof Expanded.Type
 
+// HISTORY
+
+/** A version of a page's title, icon and blocks. Edits one person makes in a
+ *  row (within `VERSION_WINDOW` of the version's start) update one version. */
+export const PageVersion = S.Struct({
+  id: S.String,
+  pageId: S.String,
+  authorId: S.String,
+  startedAt: S.Number,
+  at: S.Number,
+  title: S.String,
+  icon: S.String,
+  content: S.Array(Block),
+  isDemo: S.Boolean,
+})
+export type PageVersion = typeof PageVersion.Type
+
+export const VERSION_WINDOW = 10 * 60_000
+export const MAX_VERSIONS = 50
+
 // COMMENTS
 
 /** A comment on a page. A discussion's first comment is its thread

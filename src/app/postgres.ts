@@ -4,7 +4,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Array as Arr, Clock, Effect, Layer, Queue, Redacted, Schema as S, type Scope, Semaphore, SubscriptionRef } from 'effect'
 import { SqlClient, type SqlError } from 'effect/sql'
 
-import { type Comment, Cover, type Member, type Page } from './domain'
+import { type Comment, Cover, type Member, type Page, type PageVersion } from './domain'
 import { Document } from './editor/schema'
 import { type Backend, type Snapshot, Workspace, fromBackend, newId, snapshotOf } from './store'
 import type { WorkspaceData } from './workspace'
@@ -54,6 +54,11 @@ const migrate = (sql: Sql) =>
           seq BIGSERIAL, id TEXT PRIMARY KEY, page_id TEXT NOT NULL, thread_id TEXT NOT NULL, author_id TEXT NOT NULL, text TEXT NOT NULL,
           created_at BIGINT NOT NULL, edited_at BIGINT, resolved_at BIGINT, resolved_by TEXT, is_demo BOOLEAN NOT NULL DEFAULT FALSE
         )`
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS page_versions (
+          seq BIGSERIAL, id TEXT PRIMARY KEY, page_id TEXT NOT NULL, author_id TEXT NOT NULL, started_at BIGINT NOT NULL, at BIGINT NOT NULL,
+          title TEXT NOT NULL, icon TEXT NOT NULL, content JSONB NOT NULL, is_demo BOOLEAN NOT NULL DEFAULT FALSE
+        )`
       yield* sql`CREATE TABLE IF NOT EXISTS expanded (member_id TEXT NOT NULL, page_id TEXT NOT NULL, PRIMARY KEY (member_id, page_id))`
     }),
   )
@@ -98,6 +103,11 @@ const COMMENTS: Table<Comment> = { name: 'comments', keys: ['id'], items: data =
   edited_at: comment.editedAt, resolved_at: comment.resolvedAt, resolved_by: comment.resolvedBy, is_demo: comment.isDemo,
 }) }
 
+const VERSIONS: Table<PageVersion> = { name: 'page_versions', keys: ['id'], items: data => data.versions, row: version => ({
+  id: version.id, page_id: version.pageId, author_id: version.authorId, started_at: version.startedAt, at: version.at, title: version.title, icon: version.icon,
+  content: JSON.stringify(version.content), is_demo: version.isDemo,
+}) }
+
 const CHUNK = 200
 
 const persist = (sql: Sql, before: WorkspaceData, after: WorkspaceData) =>
@@ -107,6 +117,7 @@ const persist = (sql: Sql, before: WorkspaceData, after: WorkspaceData) =>
       { table: PAGES, ...(before.pages === after.pages ? { upserts: [], removed: [] } : changes(PAGES, before, after)) },
       { table: FAVORITES, ...(before.favorites === after.favorites ? { upserts: [], removed: [] } : changes(FAVORITES, before, after)) },
       { table: EXPANDED, ...(before.expanded === after.expanded ? { upserts: [], removed: [] } : changes(EXPANDED, before, after)) },
+      { table: VERSIONS, ...(before.versions === after.versions ? { upserts: [], removed: [] } : changes(VERSIONS, before, after)) },
       { table: COMMENTS, ...(before.comments === after.comments ? { upserts: [], removed: [] } : changes(COMMENTS, before, after)) },
     ]
     for (const { table, upserts } of all) {
@@ -138,6 +149,7 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
     const favorites = yield* sql<Record<string, unknown>>`SELECT * FROM favorites`
     const expanded = yield* sql<Record<string, unknown>>`SELECT * FROM expanded`
     const comments = yield* sql<Record<string, unknown>>`SELECT * FROM comments ORDER BY seq`
+    const versions = yield* sql<Record<string, unknown>>`SELECT * FROM page_versions ORDER BY seq`
     const orNull = (value: unknown): number | null => (value == null ? null : Number(value))
     const data: WorkspaceData = {
       members: members.map((row): Member => ({
@@ -169,6 +181,10 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
       })),
       favorites: favorites.map(row => ({ memberId: String(row['member_id']), pageId: String(row['page_id']), position: Number(row['position']) })),
       expanded: expanded.map(row => ({ memberId: String(row['member_id']), pageId: String(row['page_id']) })),
+      versions: versions.map((row): PageVersion => ({
+        id: String(row['id']), pageId: String(row['page_id']), authorId: String(row['author_id']), startedAt: Number(row['started_at']), at: Number(row['at']),
+        title: String(row['title']), icon: String(row['icon']), content: decodeDocument(json(row['content'])), isDemo: row['is_demo'] === true,
+      })),
       comments: comments.map((row): Comment => ({
         id: String(row['id']), pageId: String(row['page_id']), threadId: String(row['thread_id']), authorId: String(row['author_id']), text: String(row['text']),
         createdAt: Number(row['created_at']), editedAt: orNull(row['edited_at']), resolvedAt: orNull(row['resolved_at']),

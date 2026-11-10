@@ -16,7 +16,7 @@ const url = process.env['TEST_DATABASE_URL']
 
 const reset = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
-  yield* sql`DROP TABLE IF EXISTS comments, expanded, favorites, pages, members, workspace_meta CASCADE`
+  yield* sql`DROP TABLE IF EXISTS page_versions, comments, expanded, favorites, pages, members, workspace_meta CASCADE`
 }).pipe(Effect.provide(Postgres.clientLayerFor(url ?? '')))
 
 const store = Effect.map(Layer.build(Postgres.layer.pipe(Layer.provide(Postgres.clientLayerFor(url ?? '')))), context => Context.get(context, Workspace))
@@ -50,6 +50,7 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.deepStrictEqual(stored.cover, { _tag: 'GalleryCover', name: 'gradient-1' })
       assert.isTrue(state.favorites.some(row => row.memberId === 'morgan' && row.pageId === child.id))
       assert.isTrue(state.members.find(member => member.id === 'avery')?.isDark)
+      assert.deepStrictEqual(state.versions.filter(version => version.pageId === child.id).map(version => version.content), [[], [paragraph('p1', 'Saved in Postgres')]])
       assert.deepStrictEqual(state.comments.filter(comment => comment.pageId === child.id).map(comment => [comment.text, comment.resolvedBy]), [['Stored comment', 'morgan']])
 
       yield* two.trashPage(child.id, 'morgan')
@@ -60,6 +61,7 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.isFalse(reloaded.pages.some(page => page.id === child.id))
       assert.isFalse(reloaded.favorites.some(row => row.pageId === child.id))
       assert.isFalse(reloaded.comments.some(comment => comment.pageId === child.id))
+      assert.isFalse(reloaded.versions.some(version => version.pageId === child.id))
     })))
 
   it.live('clears demo content and keeps real pages', () =>

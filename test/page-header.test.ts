@@ -13,7 +13,7 @@ const avery = DEMO_MEMBERS.find(member => member.id === 'avery')!
 
 const model = (pageId: string, edit: (page: NonNullable<PagePage.Model['page']>) => NonNullable<PagePage.Model['page']> = page => page): PagePage.Model => {
   const data = demoData(NOW)
-  const slice = PagePage.sliceOf({ version: 0, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments }, pageId, 'avery', NOW)
+  const slice = PagePage.sliceOf({ version: 0, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, pageId, 'avery', NOW)
   const base = PagePage.init({ ...slice, me: avery, view: 'page', pageId }).model
   return { ...base, page: base.page === null ? null : edit(base.page) }
 }

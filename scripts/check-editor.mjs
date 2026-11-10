@@ -287,6 +287,31 @@ try {
   const listed = await page.waitForSelector(`[data-backlink="${url.split('/p/')[1]}"]`, { timeout: TIMEOUT }).then(() => true, () => false)
   check('and lists the pages that mention it', listed)
 
+  // Page history: the first version is the page as it was created; restoring it puts those blocks back.
+  await page.goto(url)
+  await page.waitForSelector(ROOT, { timeout: TIMEOUT })
+  const written = (await blocks()).length
+  await page.locator('#page-options').click()
+  await page.locator('#picker [role="listbox"]').getByText('Page history', { exact: true }).click()
+  const versionCount = await page.waitForFunction(() => document.querySelectorAll('#history-versions [data-version]').length >= 2 && document.activeElement?.id === 'history-panel', null, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('Page history lists the versions, newest first, and takes focus', versionCount, await page.evaluate(() => document.querySelectorAll('#history-versions [data-version]').length))
+  check('the editor stays mounted behind the history', (await blocks()).length === written, `${(await blocks()).length} of ${written} blocks`)
+  check('and previews the latest version', await page.waitForFunction(count => document.querySelectorAll('[data-version-preview] [data-block-id]').length === count, written, { timeout: TIMEOUT }).then(() => true, () => false))
+  await page.locator('#history-versions button').last().click()
+  const oldest = await page.waitForFunction(count => {
+    const shown = document.querySelectorAll('[data-version-preview] [data-block-id]').length
+    return document.querySelector('[data-version-preview]') !== null && shown < count ? { shown } : false
+  }, written, { timeout: TIMEOUT }).then(handle => handle.jsonValue().then(value => value.shown), () => null)
+  check('picking the first version previews it', oldest !== null, `${oldest} of ${written} blocks`)
+  await page.locator('#restore-version').click()
+  // A version without blocks comes back as one empty block to type in.
+  check('Restore version closes the history and puts its blocks back in the editor', await page.waitForFunction(count => document.querySelector('#history') === null && document.querySelectorAll('[data-editor-root] [data-block-id]').length === count, Math.max(1, oldest ?? 0), { timeout: TIMEOUT }).then(() => true, () => false), `${(await blocks()).length} blocks`)
+  await page.locator('#page-options').click()
+  await page.locator('#picker [role="listbox"]').getByText('Page history', { exact: true }).click()
+  await page.waitForSelector('#history-panel', { timeout: TIMEOUT })
+  await page.keyboard.press('Escape')
+  check('Esc closes the history', await page.waitForFunction(() => document.querySelector('#history') === null, null, { timeout: TIMEOUT }).then(() => true, () => false))
+
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
   await context.close()
 } finally {

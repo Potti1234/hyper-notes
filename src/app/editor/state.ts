@@ -690,7 +690,10 @@ export const apply = (state: EditorState, action: Action): EditorState => {
             return anchor === null || focus === null ? { _tag: 'NoSelection' as const } : { _tag: 'TextSelection' as const, anchor, focus }
           })()
         : state.selection
-      return { ...state, doc: action.doc.length === 0 ? state.doc : action.doc, selection }
+      // An empty page (a restored version, say) still has one block to type in.
+      return action.doc.length === 0
+        ? { ...state, doc: [B.paragraph(`${state.idPrefix}${state.idCount}`)], selection: { _tag: 'NoSelection' }, idCount: state.idCount + 1 }
+        : { ...state, doc: action.doc, selection }
     }
   }
 }

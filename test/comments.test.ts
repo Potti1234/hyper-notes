@@ -60,7 +60,7 @@ describe('workspace: comments', () => {
 describe('page: comments', () => {
   const model = (pageId = DEMO_HOME): PagePage.Model => {
     const data = demoData(NOW)
-    const slice = PagePage.sliceOf({ version: 0, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments }, pageId, 'avery', NOW)
+    const slice = PagePage.sliceOf({ version: 0, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, pageId, 'avery', NOW)
     return PagePage.init({ ...slice, me: avery, view: 'page', pageId }).model
   }
   const tags = (result: ReturnType<typeof PagePage.update>) => (result.commands ?? []).map(command => command.name)
