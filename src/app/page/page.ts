@@ -15,6 +15,7 @@ import { input } from '@/ui/input'
 import { requireMember } from '../auth'
 import { EMOJI, isEmoji, pickEmoji } from '../emoji'
 import { Member, Page, Section, formatAgo, titleOf } from '../domain'
+import * as B from '../editor/blocks'
 import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
@@ -56,6 +57,9 @@ export const Model = S.Struct({
   /** Null once it is gone (deleted for good, or made private by someone else). */
   page: S.NullOr(Page),
   crumbs: S.Array(Crumb),
+  /** Pages that mention or link this one. */
+  backlinks: S.Array(Crumb),
+  isBacklinksOpen: S.Boolean,
   isFavorite: S.Boolean,
   isInTrash: S.Boolean,
   nav: Nav,
@@ -102,10 +106,12 @@ export const Message = defineMessageUnion({
   ClickedDeleteForever: { pageId: S.String },
   ClickedToggleTheme: {},
   ClickedDismissNotice: {},
+  ClickedBacklinks: {},
   GotPage: {
     me: Member,
     page: S.NullOr(Page),
     crumbs: S.Array(Crumb),
+    backlinks: S.Array(Crumb),
     isFavorite: S.Boolean,
     isInTrash: S.Boolean,
     nav: Nav,
@@ -145,6 +151,7 @@ export const ClientMessage = S.Union([
   Message.ClickedDeleteForever,
   Message.ClickedToggleTheme,
   Message.ClickedDismissNotice,
+  Message.ClickedBacklinks,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -279,6 +286,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     me: state.members.find(member => member.id === memberId) ?? null,
     page,
     crumbs: page === null ? [] : [...ancestorsOf(state.pages, page), page].map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
+    backlinks: page === null ? [] : visible.filter(entry => entry.id !== page.id && !isTrashed(state.pages, entry) && B.mentionsPage(entry.content, page.id)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon })),
     isFavorite: page !== null && state.favorites.some(row => row.memberId === memberId && row.pageId === page.id),
     isInTrash: page !== null && isTrashed(state.pages, page),
     nav: navOf(state, memberId),
@@ -291,14 +299,14 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
 
 const sameSlice = (a: Slice, b: Slice): boolean =>
   a.me === b.me && a.page === b.page && a.isFavorite === b.isFavorite && a.isInTrash === b.isInTrash && sameNav(a.nav, b.nav) &&
-  JSON.stringify([a.crumbs, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.pages, b.people, b.trash])
+  JSON.stringify([a.crumbs, a.backlinks, a.pages, a.people, a.trash]) === JSON.stringify([b.crumbs, b.backlinks, b.pages, b.people, b.trash])
 
 // INIT
 
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -511,6 +519,7 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
       ClickedDeleteForever: ({ pageId }) => (model.trash.some(entry => entry.id === pageId) ? { model, commands: [DeletePage({ pageId, actorId: model.me.id })] } : { model }),
       ClickedToggleTheme: () => ({ model, commands: [SetTheme({ memberId: model.me.id, isDark: !model.me.isDark })] }),
       ClickedDismissNotice: () => ({ model: { ...model, notice: null } }),
+      ClickedBacklinks: () => ({ model: { ...model, isBacklinksOpen: !model.isBacklinksOpen } }),
       GotPage: ({ _tag: _, ...slice }) => ({ model: { ...model, ...slice } }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
       SucceededTrash: () => ({ model }),
@@ -607,9 +616,20 @@ const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
                   input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'title', isReadOnly: !isEditable, onInput: title => Message.ChangedTitle({ title }) }, h),
                 ] }, h),
             ] }, h),
+          ...backlinksView(model, h),
           editorView(model, page, h),
         ] }, h),
     ] }, h)
+}
+
+/** "N backlinks" under the title, opening the list of pages that point here. */
+const backlinksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
+  const count = model.backlinks.length
+  return count === 0 ? [] : [box({ class: 'mb-3 flex flex-col items-start gap-0.5 border-b border-border pb-2', attributes: [h.Id('backlinks')], children: [
+      button({ variant: 'ghost', size: 'compact', id: 'backlinks-toggle', title: model.isBacklinksOpen ? 'Hide backlinks' : 'Show backlinks', onClick: Message.ClickedBacklinks(), children: [Icon.icon('file-text', { class: 'size-3.5' }, h), `${count} backlink${count === 1 ? '' : 's'}`] }, h),
+      ...(model.isBacklinksOpen ? model.backlinks.map(entry =>
+        box({ as: 'a', class: 'flex items-center gap-1.5 rounded-md px-2 py-1 text-[14px] text-muted-foreground hover:bg-accent', attributes: [h.Href(`/p/${entry.id}`), h.DataAttribute('backlink', entry.id)], children: [pageIcon(entry.icon, h), entry.title] }, h)) : []),
+    ] }, h)]
 }
 
 /** The page's blocks: the editor island, or read-only when locked or in Trash. */
@@ -669,7 +689,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.picker === null ? [] : [pickerView({

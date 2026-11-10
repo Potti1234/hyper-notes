@@ -75,6 +75,15 @@ export const addRow = (kind: TableKind): TableKind => ({ ...kind, rows: [...kind
 
 export const addColumn = (kind: TableKind): TableKind => ({ ...kind, rows: kind.rows.map(row => [...row, []]) })
 
+/** Whether a document points at a page: a page mention, a link to /p/<id> or a link-to-page block. */
+export const mentionsPage = (doc: Document, pageId: string): boolean => {
+  const href = `/p/${pageId}`
+  const inText = (text: RichText): boolean => text.some(piece => (piece._tag === 'PageMention' && piece.pageId === pageId) || piece.marks.link === href || piece.marks.link?.startsWith(`${href}#`) === true)
+  return doc.some(entry =>
+    (entry.kind._tag === 'LinkToPage' && entry.kind.pageId === pageId) || inText(entry.text) ||
+    (entry.kind._tag === 'Table' && entry.kind.rows.some(row => row.some(inText))) || mentionsPage(entry.children, pageId))
+}
+
 /** An image width a resize may set: whole pixels from 80 to 2000. */
 export const imageWidth = (width: number): number | null => (Number.isFinite(width) ? Math.round(Math.min(2000, Math.max(80, width))) : null)
 

@@ -279,6 +279,14 @@ try {
   await page.waitForSelector(ROOT, { timeout: TIMEOUT })
   const after = await blocks()
   check('the content is saved and survives a reload', JSON.stringify(after) === JSON.stringify(before), `${before.length} → ${after.length} blocks`)
+  // Backlinks: the page this check wrote mentions the wiki.
+  await page.goto(`${base}/p/demo-wiki`)
+  await page.waitForSelector('#backlinks-toggle', { timeout: TIMEOUT })
+  check('a mentioned page counts its backlinks', (await page.locator('#backlinks-toggle').textContent())?.includes('2 backlinks'), await page.locator('#backlinks-toggle').textContent())
+  await page.locator('#backlinks-toggle').click()
+  const listed = await page.waitForSelector(`[data-backlink="${url.split('/p/')[1]}"]`, { timeout: TIMEOUT }).then(() => true, () => false)
+  check('and lists the pages that mention it', listed)
+
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
   await context.close()
 } finally {
