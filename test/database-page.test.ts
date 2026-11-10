@@ -384,5 +384,36 @@ describe('page: databases', () => {
       assert.deepStrictEqual(names(send(relate.model, PagePage.Message.ChosePicker({ value: 'db:nope' }))), [])
       assert.deepInclude(argsOf(send(relate.model, PagePage.Message.ChosePicker({ value: 'self' })), 'ChangeDatabase'), { change: { _tag: 'SetRelation', propertyId: 'rel', databaseId: '' } })
     })
+
+    it('rollups show, count and measure the rows a relation links', () => {
+      const data = demoData(NOW)
+      const tasks = data.pages.find(page => page.id === 'demo-tasks')?.database
+      if (tasks == null) return assert.fail('no demo database')
+      const rollup = (fn: D.RollupFn): D.Database => ({ ...tasks, properties: [...tasks.properties, { id: 'rel', name: 'Blocked by', type: { _tag: 'Relation', databaseId: '' } }, { id: 'roll', name: 'Blockers', type: { _tag: 'Rollup', relationId: 'rel', targetId: D.TITLE, fn } }] })
+      const rows = data.pages.filter(page => page.parentId === 'demo-tasks').map(page => (page.id === 'demo-task-1' ? { ...page, values: { ...page.values, rel: { _tag: 'RelationValue' as const, pageIds: ['demo-task-2', 'demo-task-3'] } } } : page))
+      const valueFor = (fn: D.RollupFn) => {
+        const database = rollup(fn)
+        return D.withComputed(database, 'demo-tasks', rows, [{ id: 'demo-tasks', database, rows }], []).find(row => row.id === 'demo-task-1')?.values['roll']
+      }
+      const titles = ['demo-task-2', 'demo-task-3'].map(id => rows.find(row => row.id === id)?.title).join(', ')
+      assert.deepStrictEqual(valueFor('showOriginal'), { _tag: 'TextValue', text: titles })
+      assert.deepStrictEqual(valueFor('countAll'), { _tag: 'NumberValue', value: 2 })
+      assert.deepStrictEqual(valueFor('countEmpty'), { _tag: 'NumberValue', value: 0 })
+      assert.deepStrictEqual(valueFor('percentNotEmpty'), { _tag: 'NumberValue', value: 1 })
+      assert.isUndefined(valueFor('average'))
+      assert.strictEqual(D.textOf(rollup('percentNotEmpty').properties.at(-1) ?? null, { ...rows[0]!, values: { roll: { _tag: 'NumberValue', value: 0.5 } } }, []), '50%')
+    })
+
+    it('the header menu sets what a rollup works out', () => {
+      const model = related()
+      const added = { ...model, page: model.page === null || model.page.database === null ? model.page : { ...model.page, database: { ...model.page.database, properties: [...model.page.database.properties, { id: 'roll', name: 'Blockers', type: { _tag: 'Rollup' as const, relationId: '', targetId: D.TITLE, fn: 'showOriginal' as const } }] } } }
+      const header = send(added, PagePage.Message.ClickedHeader({ propertyId: 'roll' }))
+      const relation = send(header.model, PagePage.Message.ChosePicker({ value: 'rollup:relation' }))
+      assert.deepStrictEqual(PagePage.pickerItems(relation.model).map(item => item.value), ['rel'])
+      assert.deepInclude(argsOf(send(relation.model, PagePage.Message.ChosePicker({ value: 'rel' })), 'ChangeDatabase'), { change: { _tag: 'SetRollup', propertyId: 'roll', relationId: 'rel', targetId: D.TITLE, fn: 'showOriginal' } })
+      const fn = send(header.model, PagePage.Message.ChosePicker({ value: 'rollup:fn' }))
+      assert.deepStrictEqual(names(send(fn.model, PagePage.Message.ChosePicker({ value: 'nope' }))), [])
+      assert.deepInclude(argsOf(send(fn.model, PagePage.Message.ChosePicker({ value: 'countAll' })), 'ChangeDatabase'), { change: { _tag: 'SetRollup', propertyId: 'roll', relationId: '', targetId: D.TITLE, fn: 'countAll' } })
+    })
   })
 })

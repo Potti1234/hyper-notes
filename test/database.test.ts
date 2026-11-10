@@ -200,6 +200,13 @@ describe('databases: workspace operations', () => {
       assert.strictEqual(outside.reason, 'Pick pages from the related database.')
       const notDb = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetRelation', propertyId, databaseId: DEMO_HOME }, 'avery'))
       assert.strictEqual(notDb.reason, 'Pick a database to relate to.')
+      const rollupId = (yield* workspace.changeDatabase(page.id, { _tag: 'AddProperty', tag: 'Rollup', name: '' }, 'avery'))!
+      const unknown = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetRollup', propertyId: rollupId, relationId: propertyId, targetId: 'nope', fn: 'sum' }, 'avery'))
+      assert.strictEqual(unknown.reason, 'Pick a property of the related database.')
+      const notRelation = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetRollup', propertyId: rollupId, relationId: rollupId, targetId: D.TITLE, fn: 'sum' }, 'avery'))
+      assert.strictEqual(notRelation.reason, 'Pick a relation of this database.')
+      const rolled = yield* workspace.changeDatabase(page.id, { _tag: 'SetRollup', propertyId: rollupId, relationId: propertyId, targetId: D.TITLE, fn: 'countAll' }, 'avery')
+      assert.isNull(rolled)
     })))
 
   it.effect('pages with content, locked or private pages of others cannot change', () =>

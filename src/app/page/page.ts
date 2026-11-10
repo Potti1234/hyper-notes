@@ -540,6 +540,9 @@ export const rowEntryOf = (page: Page, titles: ReadonlyMap<string, string> = new
   })),
 })
 
+const computedRow = (model: Model, parent: ParentDatabase, row: RowEntry): RowEntry =>
+  D.withComputed(parent.database, parent.id, [row], model.related, model.people)[0] ?? row
+
 const titlesOf = (model: Model): ReadonlyMap<string, string> => new Map(model.pages.map(entry => [entry.id, entry.title]))
 
 const pathOf = (state: WorkspaceState, page: Page): string => ancestorsOf(state.pages, page).map(titleOf).join(' / ')
@@ -557,7 +560,11 @@ const relatedOf = (state: WorkspaceState, visible: ReadonlyArray<Page>, source: 
     return target?.database == null || isTrashed(state.pages, target) ? [] : [{
       id,
       title: titleOf(target),
-      rows: visible.filter(entry => entry.parentId === id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => ({ id: entry.id, title: entry.title, icon: entry.icon })),
+      database: target.database,
+      rows: visible.filter(entry => entry.parentId === id && entry.trashedAt === null).sort((a, b) => a.position - b.position).map(entry => ({
+        id: entry.id, title: entry.title, icon: entry.icon, values: entry.values,
+        createdAt: entry.createdAt, createdBy: entry.createdBy, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy,
+      })),
     }]
   })
 }
@@ -662,6 +669,10 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
       const current = editableDatabase(model)?.database.properties.find(entry => entry.id === picker.pageId)?.type._tag
       return D.PROPERTY_TAGS.map(tag => ({ value: tag, label: D.TYPE_LABEL[tag], isChecked: tag === current }))
     }
+    case 'rollupRelation':
+    case 'rollupProperty':
+    case 'rollupFn':
+      return rollupItems(model, picker.field, picker.pageId)
     case 'relation': {
       const page = editableDatabase(model)
       const property = page?.database.properties.find(entry => entry.id === picker.pageId)
@@ -794,6 +805,9 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'property':
     case 'propertyType':
     case 'relation':
+    case 'rollupRelation':
+    case 'rollupProperty':
+    case 'rollupFn':
     case 'addProperty':
     case 'view':
     case 'addView':
@@ -943,6 +957,46 @@ const pickDate = (model: Model, day: string | null): UpdateReturn => {
 const relationName = (model: Model, databaseId: string): string =>
   databaseId === '' ? 'This database' : model.databases.find(entry => entry.id === databaseId)?.title ?? 'Untitled'
 
+type RollupType = Extract<D.PropertyType, { _tag: 'Rollup' }>
+type EditableDatabase = Readonly<{ id: string; database: D.Database }>
+
+/** The database a rollup's relation points to. */
+const rollupTarget = (model: Model, page: EditableDatabase, relationId: string): RelatedDatabase | undefined => {
+  const relation = D.propertyOf(page.database, relationId)
+  if (relation?.type._tag !== 'Relation') return undefined
+  const targetId = relation.type.databaseId === '' ? page.id : relation.type.databaseId
+  return model.related.find(entry => entry.id === targetId)
+}
+
+const rollupMenu = (model: Model, page: EditableDatabase, type: RollupType): ReadonlyArray<PickerItem> => {
+  const target = type.targetId === D.TITLE ? 'Name' : rollupTarget(model, page, type.relationId)?.database.properties.find(entry => entry.id === type.targetId)?.name
+  return [
+    { value: 'rollup:relation', label: 'Relation', group: 'Rollup', hint: D.propertyOf(page.database, type.relationId)?.name ?? 'None' },
+    { value: 'rollup:property', label: 'Property', group: 'Rollup', hint: target ?? 'None' },
+    { value: 'rollup:fn', label: 'Calculate', group: 'Rollup', hint: D.ROLLUP_LABEL[type.fn] },
+  ]
+}
+
+const rollupItems = (model: Model, field: 'rollupRelation' | 'rollupProperty' | 'rollupFn', propertyId: string): ReadonlyArray<PickerItem> => {
+  const page = editableDatabase(model)
+  const property = page?.database.properties.find(entry => entry.id === propertyId)
+  if (page === null || property?.type._tag !== 'Rollup') return []
+  const type = property.type
+  switch (field) {
+    case 'rollupRelation':
+      return page.database.properties.filter(entry => entry.type._tag === 'Relation').map(entry => ({ value: entry.id, label: entry.name, isChecked: entry.id === type.relationId }))
+    case 'rollupProperty': {
+      const target = rollupTarget(model, page, type.relationId)
+      return target === undefined ? [] : [
+        { value: D.TITLE, label: 'Name', isChecked: type.targetId === D.TITLE },
+        ...target.database.properties.filter(entry => entry.type._tag !== 'Rollup').map(entry => ({ value: entry.id, label: entry.name, isChecked: entry.id === type.targetId })),
+      ]
+    }
+    case 'rollupFn':
+      return D.ROLLUP_FNS.map(fn => ({ value: fn, label: D.ROLLUP_LABEL[fn], isChecked: fn === type.fn }))
+  }
+}
+
 const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerItem> => {
   const page = editableDatabase(model)
   const view = page === null ? null : activeView(page.database, model.db)
@@ -959,6 +1013,7 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     { value: 'rename', label: 'Rename', group: 'Property' },
     { value: 'type', label: 'Change type', group: 'Property', hint: D.TYPE_LABEL[property.type._tag] },
     ...(property.type._tag === 'Relation' ? [{ value: 'relate', label: 'Related to', group: 'Property', hint: relationName(model, property.type.databaseId) }] : []),
+    ...(property.type._tag === 'Rollup' && page !== null ? rollupMenu(model, page, property.type) : []),
     ...sorts,
     { value: 'hide', label: 'Hide in view', group: 'View' },
     { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
@@ -1129,6 +1184,9 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
       if (property === undefined) return { model: closed }
       switch (value) {
         case 'rename': return { model: focusOn(withDb(closed, { renaming: { propertyId: property.id, name: property.name } }), `#${PROPERTY_NAME_ID}`) }
+        case 'rollup:relation': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupRelation', property.id, picker.anchor)) } : { model: closed }
+        case 'rollup:property': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupProperty', property.id, picker.anchor)) } : { model: closed }
+        case 'rollup:fn': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupFn', property.id, picker.anchor)) } : { model: closed }
         case 'relate': return property.type._tag === 'Relation' ? { model: withPicker(model, openPicker('relation', property.id, picker.anchor)) } : { model: closed }
         case 'type': return { model: withPicker(model, openPicker('propertyType', property.id, picker.anchor, Math.max(0, D.PROPERTY_TAGS.indexOf(property.type._tag)))) }
         case 'hide': return view === null ? { model: closed } : changeDb(model, page, { _tag: 'SetHidden', viewId: view.id, propertyId: property.id, isHidden: true })
@@ -1136,6 +1194,16 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         case 'delete': return changeDb(model, page, { _tag: 'DeleteProperty', propertyId: property.id })
         default: return { model: closed }
       }
+    }
+    case 'rollupRelation':
+    case 'rollupProperty':
+    case 'rollupFn': {
+      if (property?.type._tag !== 'Rollup' || !rollupItems(model, picker.field, property.id).some(item => item.value === value)) return { model: closed }
+      const { relationId, targetId, fn } = property.type
+      const next = picker.field === 'rollupRelation'
+        ? { relationId: value, targetId: value === relationId ? targetId : D.TITLE, fn }
+        : picker.field === 'rollupProperty' ? { relationId, targetId: value, fn } : { relationId, targetId, fn: D.ROLLUP_FNS.find(entry => entry === value) ?? fn }
+      return changeDb(model, page, { _tag: 'SetRollup', propertyId: property.id, ...next })
     }
     case 'relation': {
       const databaseId = value === 'self' ? '' : model.databases.find(entry => `db:${entry.id}` === value)?.id
@@ -1665,9 +1733,9 @@ const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): Readonl
   const isEditable = !model.isInTrash && !page.isLocked
   const view = page.database === null ? null : activeView(page.database, model.db)
   const context = { ui: model.db, people: model.people, today: todayOf(model), msgs: DB_MESSAGES, scope: '', isPeeking: view !== null && D.openInOf(view) !== 'full' }
-  if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: model.rows }, h)]
+  if (page.database !== null) return [databaseView({ ...context, isEditable, pageId: page.id, database: page.database, rows: D.withComputed(page.database, page.id, model.rows, model.related, model.people) }, h)]
   return [
-    ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, rowEntryOf(page, titlesOf(model)), { ...context, isEditable: !model.isInTrash }, h)]),
+    ...(model.parentDatabase === null ? [] : [propertiesView(model.parentDatabase, computedRow(model, model.parentDatabase, rowEntryOf(page, titlesOf(model))), { ...context, isEditable: !model.isInTrash }, h)]),
     ...(isEditable && model.parentDatabase === null && isBlankPage(page) ? [startView(h)] : []),
     editorView(model, page, h),
   ]

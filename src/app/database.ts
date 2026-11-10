@@ -20,6 +20,15 @@ export type StatusOption = typeof StatusOption.Type
 export const NumberFormat = S.Literals(['number', 'percent', 'dollar', 'euro'])
 export type NumberFormat = typeof NumberFormat.Type
 
+export const ROLLUP_FNS = ['showOriginal', 'countAll', 'countValues', 'countUnique', 'countEmpty', 'percentNotEmpty', 'sum', 'average', 'min', 'max', 'range', 'checked', 'percentChecked'] as const
+export const RollupFn = S.Literals(ROLLUP_FNS)
+export type RollupFn = typeof RollupFn.Type
+export const ROLLUP_LABEL: Readonly<Record<RollupFn, string>> = {
+  showOriginal: 'Show original', countAll: 'Count all', countValues: 'Count values', countUnique: 'Count unique values', countEmpty: 'Count empty',
+  percentNotEmpty: 'Percent not empty', sum: 'Sum', average: 'Average', min: 'Min', max: 'Max', range: 'Range', checked: 'Checked', percentChecked: 'Percent checked',
+}
+const isPercent = (fn: RollupFn): boolean => fn === 'percentNotEmpty' || fn === 'percentChecked'
+
 export const PropertyType = S.Union([
   S.TaggedStruct('Text', {}),
   S.TaggedStruct('Number', { format: NumberFormat }),
@@ -40,16 +49,18 @@ export const PropertyType = S.Union([
   S.TaggedStruct('Id', { prefix: S.String }),
   /** Links rows to pages of a database ('' for this one). */
   S.TaggedStruct('Relation', { databaseId: S.String }),
+  /** Works out `fn` over the `targetId` property of the rows relation `relationId` links. */
+  S.TaggedStruct('Rollup', { relationId: S.String, targetId: S.String, fn: RollupFn }),
 ])
 export type PropertyType = typeof PropertyType.Type
 export type PropertyTag = PropertyType['_tag']
 
-export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Relation']
+export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Relation', 'Rollup']
 export const isPropertyTag = (tag: string): tag is PropertyTag => (PROPERTY_TAGS as ReadonlyArray<string>).includes(tag)
 
 export const TYPE_LABEL: Readonly<Record<PropertyTag, string>> = {
   Text: 'Text', Number: 'Number', Select: 'Select', MultiSelect: 'Multi-select', Status: 'Status', Date: 'Date', Person: 'Person', Checkbox: 'Checkbox',
-  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID', Relation: 'Relation',
+  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID', Relation: 'Relation', Rollup: 'Rollup',
 }
 
 export const Property = S.Struct({ id: S.String, name: S.String, type: PropertyType })
@@ -155,6 +166,7 @@ export const typeOf = (tag: PropertyTag, id: (prefix: string) => string, keep?: 
   switch (tag) {
     case 'Id': return { _tag: 'Id', prefix: '' }
     case 'Relation': return { _tag: 'Relation', databaseId: keep?._tag === 'Relation' ? keep.databaseId : '' }
+    case 'Rollup': return { _tag: 'Rollup', relationId: '', targetId: TITLE, fn: 'showOriginal' }
     case 'Number': return { _tag: 'Number', format: 'number' }
     case 'Select': return { _tag: 'Select', options }
     case 'MultiSelect': return { _tag: 'MultiSelect', options }
@@ -200,6 +212,7 @@ export const valueOf = (property: Property, row: Row): Value | null => {
     case 'Text': case 'Url': case 'Email': case 'Phone': return value._tag === 'TextValue' && value.text !== '' ? value : null
     case 'Number': case 'Id': return value._tag === 'NumberValue' ? value : null
     case 'Relation': return value._tag === 'RelationValue' && value.pageIds.length > 0 ? value : null
+    case 'Rollup': return (value._tag === 'TextValue' && value.text !== '') || value._tag === 'NumberValue' ? value : null
     case 'Select': case 'Status': return value._tag === 'OptionValue' && optionsOf(property).some(option => option.id === value.optionId) ? value : null
     case 'MultiSelect': {
       if (value._tag !== 'OptionsValue') return null
@@ -234,6 +247,66 @@ export const numberRows = <R extends Row>(database: Database, rows: ReadonlyArra
     })
   }, rows)
 
+/** A database relations point to, with its rows. */
+export type Related = Readonly<{ id: string; database: Database; rows: ReadonlyArray<Row> }>
+
+const sum = (numbers: ReadonlyArray<number>): number => numbers.reduce((total, n) => total + n, 0)
+
+/** The rollup of a row: `fn` over the target property of the rows its relation links. */
+export const rollupValue = (database: Database, databaseId: string, property: Property, row: Row, related: ReadonlyArray<Related>, people: ReadonlyArray<Person>): Value | null => {
+  if (property.type._tag !== 'Rollup') return null
+  const { relationId, targetId, fn } = property.type
+  const relation = propertyOf(database, relationId)
+  if (relation?.type._tag !== 'Relation') return null
+  const targetDatabaseId = relation.type.databaseId === '' ? databaseId : relation.type.databaseId
+  const target = related.find(entry => entry.id === targetDatabaseId)
+  const targetProperty = targetId === TITLE || target === undefined ? null : propertyOf(target.database, targetId)
+  if (target === undefined || (targetId !== TITLE && targetProperty === null)) return null
+  const linkedIds = valueOf(relation, row)
+  const linked = (linkedIds?._tag === 'RelationValue' ? linkedIds.pageIds : []).flatMap(id => target.rows.filter(entry => entry.id === id))
+  const texts = linked.map(entry => textOf(targetProperty, entry, people))
+  const filled = texts.filter(text => text !== '')
+  const numbers = targetProperty === null ? [] : linked.flatMap(entry => {
+    const value = valueOf(targetProperty, entry)
+    return value?._tag === 'NumberValue' ? [value.value] : []
+  })
+  const checked = texts.filter(text => text === 'Yes').length
+  const number = (n: number | null): Value | null => (n === null || !Number.isFinite(n) ? null : { _tag: 'NumberValue', value: n })
+  const some = (f: (all: ReadonlyArray<number>) => number) => number(numbers.length === 0 ? null : f(numbers))
+  switch (fn) {
+    case 'showOriginal': return filled.length === 0 ? null : { _tag: 'TextValue', text: filled.join(', ') }
+    case 'countAll': return number(linked.length)
+    case 'countValues': return number(filled.length)
+    case 'countUnique': return number(new Set(filled).size)
+    case 'countEmpty': return number(linked.length - filled.length)
+    case 'percentNotEmpty': return number(linked.length === 0 ? null : filled.length / linked.length)
+    case 'sum': return number(sum(numbers))
+    case 'average': return some(all => sum(all) / all.length)
+    case 'min': return some(all => Math.min(...all))
+    case 'max': return some(all => Math.max(...all))
+    case 'range': return some(all => Math.max(...all) - Math.min(...all))
+    case 'checked': return number(checked)
+    case 'percentChecked': return number(linked.length === 0 ? null : checked / linked.length)
+  }
+}
+
+/** Rows with their rollups worked out, for showing, filtering and sorting. */
+export const withComputed = <R extends Row>(database: Database, databaseId: string, rows: ReadonlyArray<R>, related: ReadonlyArray<Related>, people: ReadonlyArray<Person>): ReadonlyArray<R> => {
+  const computed = database.properties.filter(property => property.type._tag === 'Rollup')
+  if (computed.length === 0) return rows
+  const ids = new Set(computed.map(property => property.id))
+  return rows.map(row => ({
+    ...row,
+    values: {
+      ...Object.fromEntries(Object.entries(row.values).filter(([id]) => !ids.has(id))),
+      ...Object.fromEntries(computed.flatMap(property => {
+        const value = rollupValue(database, databaseId, property, row, related, people)
+        return value === null ? [] : [[property.id, value] as const]
+      })),
+    },
+  }))
+}
+
 const isoDay = (at: number): string => new Date(at).toISOString().slice(0, 10)
 
 /** Values as plain words, for filters, sorting and search. */
@@ -246,6 +319,11 @@ export const textOf = (property: Property | null, row: Row, people: ReadonlyArra
     case 'CreatedBy': return name(row.createdBy)
     case 'LastEditedBy': return name(row.updatedBy)
     case 'Id': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? idText(property.type.prefix, value.value) : '' }
+    case 'Rollup': {
+      const value = valueOf(property, row)
+      if (value?._tag === 'NumberValue') return formatNumber(value.value, isPercent(property.type.fn) ? 'percent' : 'number')
+      break
+    }
     default: break
   }
   const value = valueOf(property, row)
@@ -311,6 +389,8 @@ export const checkValue = (property: Property, value: Value, people: ReadonlyArr
       return value._tag === 'CheckboxValue' ? value : 'That value does not fit this property.'
     case 'Id':
       return 'IDs are numbered by themselves.'
+    case 'Rollup':
+      return 'Rollups are worked out by themselves.'
     case 'Relation':
       return value._tag === 'RelationValue' ? { _tag: 'RelationValue', pageIds: [...new Set(value.pageIds)].slice(0, MAX_OPTIONS) } : 'That value does not fit this property.'
     default:
@@ -338,6 +418,7 @@ export const operatorsFor = (property: Property | null): ReadonlyArray<Operator>
     case 'MultiSelect': case 'Person': case 'CreatedBy': case 'LastEditedBy': return ['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']
     case 'Date': case 'CreatedTime': case 'LastEditedTime': return ['is', 'before', 'after', 'isEmpty', 'isNotEmpty']
     case 'Checkbox': return ['isChecked', 'isNotChecked']
+    case 'Rollup': return ['contains', 'doesNotContain', 'is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
     default: return ['contains', 'doesNotContain', 'is', 'isNot', 'isEmpty', 'isNotEmpty']
   }
 }
@@ -367,7 +448,7 @@ export const matchesFilter = (database: Database, filter: Filter, row: Row, peop
     const has = idsOf(property, row).includes(filter.value)
     return filter.operator === 'is' || filter.operator === 'contains' ? has : !has
   }
-  if (tag === 'Number' || tag === 'Id') {
+  if (tag === 'Number' || tag === 'Id' || (tag === 'Rollup' && property !== null && valueOf(property, row)?._tag === 'NumberValue')) {
     const value = property === null ? null : valueOf(property, row)
     const number = value?._tag === 'NumberValue' ? value.value : null
     const wanted = Number(filter.value)
@@ -411,6 +492,7 @@ const sortKey = (database: Database, propertyId: string, row: Row, people: Reado
     case 'CreatedTime': return row.createdAt
     case 'LastEditedTime': return row.updatedAt
     case 'Number': case 'Id': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : null }
+    case 'Rollup': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : value?._tag === 'TextValue' ? value.text.toLowerCase() : null }
     case 'Checkbox': { const value = valueOf(property, row); return value?._tag === 'CheckboxValue' && value.isChecked ? 1 : 0 }
     case 'Select': case 'Status': {
       // Options sort in their own order, as in Notion.
@@ -527,6 +609,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
   S.TaggedStruct('SetRelation', { propertyId: S.String, databaseId: S.String }),
+  S.TaggedStruct('SetRollup', { propertyId: S.String, relationId: S.String, targetId: S.String, fn: RollupFn }),
   S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
   S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
   S.TaggedStruct('SetCardSize', { viewId: S.String, size: CardSize }),
@@ -679,6 +762,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
       const type: PropertyType = { _tag: 'Relation', databaseId: change.databaseId.slice(0, 200) }
       return { database: { ...database, properties: database.properties.map(entry => (entry.id === property.id ? { ...entry, type } : entry)) }, addedId: null }
     }
+    case 'SetRollup':
+      return withProperty(change.propertyId, property => {
+        if (property.type._tag !== 'Rollup') return 'That property is not a rollup.'
+        if (change.relationId !== '' && propertyOf(database, change.relationId)?.type._tag !== 'Relation') return 'Pick a relation of this database.'
+        return { ...property, type: { _tag: 'Rollup', relationId: change.relationId, targetId: change.targetId.slice(0, 200), fn: change.fn } }
+      })
     case 'SetWidth': {
       if (!isProperty(change.propertyId)) return 'That property is gone.'
       if (!Number.isFinite(change.width)) return 'That width does not fit.'

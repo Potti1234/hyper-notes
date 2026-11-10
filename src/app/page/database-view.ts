@@ -37,7 +37,9 @@ export const RowEntry = S.Struct({
 export const LinkedPage = S.Struct({ id: S.String, title: S.String, icon: S.String })
 export type LinkedPage = typeof LinkedPage.Type
 /** A database the open one relates to, with the rows its relation cells can pick. */
-export const RelatedDatabase = S.Struct({ id: S.String, title: S.String, rows: S.Array(LinkedPage) })
+export const RelatedRow = S.Struct({ id: S.String, title: S.String, icon: S.String, values: D.Values, createdAt: S.Number, createdBy: S.String, updatedAt: S.Number, updatedBy: S.String })
+export type RelatedRow = typeof RelatedRow.Type
+export const RelatedDatabase = S.Struct({ id: S.String, title: S.String, database: D.Database, rows: S.Array(RelatedRow) })
 export type RelatedDatabase = typeof RelatedDatabase.Type
 export type RowEntry = typeof RowEntry.Type
 
@@ -101,7 +103,7 @@ export const isTyped = (property: D.Property | null): boolean =>
 
 export const isPicked = (property: D.Property): boolean => ['Select', 'MultiSelect', 'Status', 'Person'].includes(property.type._tag)
 
-export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id'].includes(property.type._tag)
+export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Rollup'].includes(property.type._tag)
 
 /** What a typed cell starts with when it opens. */
 export const draftOf = (property: D.Property | null, row: RowEntry): string => {
@@ -111,7 +113,7 @@ export const draftOf = (property: D.Property | null, row: RowEntry): string => {
 }
 
 export const TYPE_ICON: Readonly<Record<D.PropertyTag | 'Title', string>> = {
-  Title: 'type', Id: 'list-ordered', Relation: 'arrow-up-right', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
+  Title: 'type', Id: 'list-ordered', Relation: 'arrow-up-right', Rollup: 'calculator', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
   Checkbox: 'square-check', Url: 'link', Email: 'at-sign', Phone: 'pin', CreatedTime: 'clock', CreatedBy: 'user', LastEditedTime: 'clock', LastEditedBy: 'user',
 }
 

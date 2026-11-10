@@ -329,6 +329,11 @@ export const changeDatabase = (pageId: string, change: DatabaseChange, actorId: 
   Effect.gen(function* () {
     const page = yield* editablePage(data, pageId, actorId)
     if (page.database === null) return yield* invalid('This page is not a database.')
+    if (change._tag === 'SetRollup' && change.relationId !== '' && change.targetId !== TITLE) {
+      const relation = propertyOf(page.database, change.relationId)
+      const target = relation?.type._tag !== 'Relation' ? undefined : relation.type.databaseId === '' ? page : pageById(data.pages, relation.type.databaseId)
+      if (target?.database == null || propertyOf(target.database, change.targetId) === null) return yield* invalid('Pick a property of the related database.')
+    }
     if (change._tag === 'SetRelation' && change.databaseId !== '') {
       const target = pageById(data.pages, change.databaseId)
       if (target?.database == null || target.trashedAt !== null || !canSee(target, actorId)) return yield* invalid('Pick a database to relate to.')

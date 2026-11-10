@@ -491,6 +491,24 @@ try {
   await avery.page.keyboard.press('Escape')
   await until(avery.page, () => document.querySelector('#picker') === null)
 
+  // ROLLUPS: a rollup shows and counts what a relation links.
+  await avery.page.locator('#add-property').click()
+  await choose(avery.page, 'Rollup')
+  await until(avery.page, () => [...document.querySelectorAll('#database-table [role="columnheader"]')].some(head => head.textContent === 'Rollup'))
+  const rollup = await propertyId(avery.page, 'Rollup')
+  await avery.page.keyboard.press('Escape')
+  await until(avery.page, () => document.querySelector('#picker') === null)
+  await avery.page.locator(`#header-${rollup}`).click()
+  await choose(avery.page, 'Relation')
+  await until(avery.page, () => document.querySelector('#picker[data-field="rollupRelation"]') !== null)
+  await choose(avery.page, 'Relation')
+  check('a rollup shows the titles a relation links', await until(morgan.page, ([prop, title]) => document.querySelector(`#cell-demo-task-1-${prop}`)?.textContent === title, [rollup, linkedTitle]))
+  await avery.page.locator(`#header-${rollup}`).click()
+  await choose(avery.page, 'Calculate')
+  await until(avery.page, () => document.querySelector('#picker[data-field="rollupFn"]') !== null)
+  await choose(avery.page, 'Count all')
+  check('a rollup counts linked rows', await until(morgan.page, prop => document.querySelector(`#cell-demo-task-1-${prop}`)?.textContent === '1', rollup))
+
   // COLUMN WIDTHS: dragging a header's edge resizes the column for everyone.
   // Adding a property scrolls the table to its new column; bring the title back into view.
   await avery.page.evaluate(() => { document.querySelector('#database-table').scrollLeft = 0 })
@@ -504,7 +522,7 @@ try {
 
   // ROW PEEKS: side and center peeks edit a row over its database; full page links to it.
   await avery.page.locator('#open-demo-task-2').click()
-  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 6 && document.activeElement?.id === 'peek-close'))
+  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 7 && document.activeElement?.id === 'peek-close'))
   await avery.page.locator('#peek-cell-demo-task-2-demo-status').click()
   await until(avery.page, () => document.querySelector('#picker[data-field="cell"]') !== null)
   await choose(avery.page, 'Not started')
