@@ -11,34 +11,34 @@ deliberately left out (✗, with the reason). The status column is kept current.
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ⏳ |
+| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ⏳ fixed 240 px; resize, collapse and peek not built |
 | Workspace switcher | Top row: workspace icon + name + chevron; menu shows the account email, settings, log out | ⏳ |
-| Top shortcuts | Search (`Ctrl+K`/`Ctrl+P`), Home, Inbox, Settings | ⏳ |
-| New page | Pencil/compose button in the sidebar header and `Ctrl+N`: creates an untitled private page and opens it | ⏳ |
-| Sections | Favorites (only when non-empty), Shared (workspace pages), Private (my pages); each heading shows a `+` on hover that creates a page in that section | ⏳ |
-| Page tree | Row = disclosure arrow (replaces the icon on hover; empty pages show "No pages inside"), icon (emoji or default page glyph), title (`Untitled` grey when empty); hover shows `•••` and `+` (add a page inside, expands the row); the open page is highlighted; expansion state persists per member | ⏳ |
-| Row `•••` menu | Add to / Remove from Favorites, Copy link, Duplicate (`Ctrl+D`), Rename (inline input popover), Move to (page picker), Move to Trash; footer "Last edited by … · time" | ⏳ |
+| Top shortcuts | Search (`Ctrl+K`/`Ctrl+P`), Home, Inbox, Settings | ✅ Search, Home, Settings; Inbox ⏳ |
+| New page | Pencil/compose button in the sidebar header and `Ctrl+N`: creates an untitled private page and opens it | ✅ button; `Ctrl+N` ⏳ |
+| Sections | Favorites (only when non-empty), Shared (workspace pages), Private (my pages); each heading shows a `+` on hover that creates a page in that section | ✅ |
+| Page tree | Row = disclosure arrow (replaces the icon on hover; empty pages show "No pages inside"), icon (emoji or default page glyph), title (`Untitled` grey when empty); hover shows `•••` and `+` (add a page inside, expands the row); the open page is highlighted; expansion state persists per member | ✅ |
+| Row `•••` menu | Add to / Remove from Favorites, Copy link, Duplicate (`Ctrl+D`), Rename (inline input popover), Move to (page picker), Move to Trash; footer "Last edited by … · time" | ✅ favorite, duplicate, move, trash, open; Copy link and Rename ⏳ |
 | Drag in the tree | Drag a row onto another (nest inside: blue box) or between rows (reorder: blue line); drag between sections | ⏳ |
-| Trash | Sidebar entry opens a popover: search field, filter, list of trashed pages with restore (↶) and delete forever (🗑 with confirm); trashed pages open read-only with a red banner "This page is in Trash" + Restore page + Delete from Trash | ⏳ |
+| Trash | Sidebar entry opens a popover: search field, filter, list of trashed pages with restore (↶) and delete forever (🗑 with confirm); trashed pages open read-only with a red banner "This page is in Trash" + Restore page + Delete from Trash | ✅ as a Trash page with search instead of a popover |
 | Templates / Import | Out of scope for the first version | ✗ |
-| Dark mode | `Ctrl+Shift+L` toggles; theme presets on /settings (as in hyper-tasks) | ⏳ |
+| Dark mode | `Ctrl+Shift+L` toggles; theme presets on /settings (as in hyper-tasks) | ✅ toggle and presets; `Ctrl+Shift+L` ⏳ |
 
 ## 2. Page chrome
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Topbar | Breadcrumbs (icon + title per ancestor, middle ones collapse into `…` when deep; each one a link), "Edited 5m ago" (title tooltip shows editor + date), Share, comments (💬), Favorite ☆/★, `•••` | ⏳ |
-| `•••` page menu | Search box at the top (filters the actions); Style: Default / Serif / Mono (three "Ag" tiles); toggles: Small text, Full width, Lock page; Copy link (`Ctrl+L`), Duplicate, Move to, Move to Trash, Undo, Version history, Export (Markdown), Word count footer "Last edited by …" | ⏳ |
-| Hover controls | Hovering the title area shows "Add icon", "Add cover", "Add comment" (only the missing ones) | ⏳ |
-| Icon | 78 px emoji left above the title; click opens the emoji picker: tabs Emoji / Upload(URL), filter field, Random 🔀, Remove; categories with headings, recent emoji first; in sidebar + breadcrumbs too | ⏳ |
-| Cover | Full-width 30vh banner; hover shows "Change cover" and "Reposition"; Change opens a gallery (colour & gradient tiles, Link tab with URL); Reposition drags the image vertically then "Save position"; Remove | ⏳ |
-| Title | Large (40 px, bold) editable heading, placeholder "Untitled"; Enter moves into the first block (creating one); ArrowDown at the end enters the body; changes rename the page everywhere live | ⏳ |
-| Empty page | Body shows "Press Enter to continue with an empty page, or pick a template" style list: Empty page, Table/Board/List/Gallery/Calendar (turn the page into a database) | ⏳ |
-| Lock page | Locked pages refuse edits; a "🔒 Locked" chip in the topbar unlocks | ⏳ |
-| Full width / small text / font | Applied on the page root; persisted per page | ⏳ |
-| Backlinks | "N backlinks" line under the title, expands the list of pages mentioning this one | ⏳ |
-| Page comments | Comment thread under the title ("Add a comment…"), resolve, delete own | ⏳ |
-| Version history | Snapshots on edits (throttled), list with author/time, preview, Restore | ⏳ |
+| Topbar | Breadcrumbs (icon + title per ancestor, middle ones collapse into `…` when deep; each one a link), "Edited 5m ago" (title tooltip shows editor + date), Share, comments (💬), Favorite ☆/★, `•••` | ✅ breadcrumbs, Edited, Favorite, comments, `•••`; Share ✗ (single workspace) |
+| `•••` page menu | Search box at the top (filters the actions); Style: Default / Serif / Mono (three "Ag" tiles); toggles: Small text, Full width, Lock page; Copy link (`Ctrl+L`), Duplicate, Move to, Move to Trash, Undo, Version history, Export (Markdown), Word count footer "Last edited by …" | ✅ style, small text, full width, lock, history, favorite, duplicate, move, trash; action search, Copy link, Export and word count ⏳ |
+| Hover controls | Hovering the title area shows "Add icon", "Add cover", "Add comment" (only the missing ones) | ✅ |
+| Icon | 78 px emoji left above the title; click opens the emoji picker: tabs Emoji / Upload(URL), filter field, Random 🔀, Remove; categories with headings, recent emoji first; in sidebar + breadcrumbs too | ✅ emoji, filter, Random, Remove; Upload ⏳ |
+| Cover | Full-width 30vh banner; hover shows "Change cover" and "Reposition"; Change opens a gallery (colour & gradient tiles, Link tab with URL); Reposition drags the image vertically then "Save position"; Remove | ✅ gallery, link, change, remove; Reposition ⏳ |
+| Title | Large (40 px, bold) editable heading, placeholder "Untitled"; Enter moves into the first block (creating one); ArrowDown at the end enters the body; changes rename the page everywhere live | ✅ |
+| Empty page | Body shows "Press Enter to continue with an empty page, or pick a template" style list: Empty page, Table/Board/List/Gallery/Calendar (turn the page into a database) | ✅ all five database layouts; templates ✗ |
+| Lock page | Locked pages refuse edits; a "🔒 Locked" chip in the topbar unlocks | ✅ |
+| Full width / small text / font | Applied on the page root; persisted per page | ✅ |
+| Backlinks | "N backlinks" line under the title, expands the list of pages mentioning this one | ✅ |
+| Page comments | Comment thread under the title ("Add a comment…"), resolve, delete own | ✅ plus reply, edit, reopen |
+| Version history | Snapshots on edits (throttled), list with author/time, preview, Restore | ✅ |
 
 ## 3. Editor: the block model
 
@@ -117,27 +117,27 @@ emoji.
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Database page | Title + description, view tabs, "New" button (with ▾ templates), Filter, Sort, Search 🔍, `•••` (properties, layout, group) | ⏳ |
-| Rows are pages | Open as side peek (default), centre peek or full page; peek shows properties above the page body | ⏳ |
-| Properties | Text, Number (format), Select, Multi-select (coloured options, create on type), Status (To do / In progress / Done groups), Date (range, time), Person, Checkbox, URL, Email, Phone, Created time, Created by, Last edited time, Last edited by, ID; Formula, Relation, Rollup, Files (✗ first version) | ⏳ |
-| Table view | Column headers with type icon; click header → menu (rename, type, sort asc/desc, filter, hide, insert left/right, duplicate, delete); resize by dragging; cell editing in place; "+ New" row at the bottom; row hover handle with Open; calculations footer (count, …) | ⏳ |
-| Board view | Group by select/status/person; columns with counts, drag cards between columns; "+ New" per column; hidden groups | ⏳ |
-| List view | One line per page with chosen properties right-aligned | ⏳ |
-| Gallery view | Cards with page cover/content preview; card size | ⏳ |
-| Calendar view | Month grid by a date property; Today; drag to move dates; "+" on day hover | ⏳ |
+| Database page | Title + description, view tabs, "New" button (with ▾ templates), Filter, Sort, Search 🔍, `•••` (properties, layout, group) | ✅ title, view tabs, New, Filter, Sort, Search, view menu; description and templates ⏳ |
+| Rows are pages | Open as side peek (default), centre peek or full page; peek shows properties above the page body | ✅ (page body is edited on the full page) |
+| Properties | Text, Number (format), Select, Multi-select (coloured options, create on type), Status (To do / In progress / Done groups), Date (range, time), Person, Checkbox, URL, Email, Phone, Created time, Created by, Last edited time, Last edited by, ID; Formula, Relation, Rollup, Files (✗ first version) | ✅ all listed; Files ✗ |
+| Table view | Column headers with type icon; click header → menu (rename, type, sort asc/desc, filter, hide, insert left/right, duplicate, delete); resize by dragging; cell editing in place; "+ New" row at the bottom; row hover handle with Open; calculations footer (count, …) | ✅ |
+| Board view | Group by select/status/person; columns with counts, drag cards between columns; "+ New" per column; hidden groups | ✅ |
+| List view | One line per page with chosen properties right-aligned | ✅ |
+| Gallery view | Cards with page cover/content preview; card size | ✅ |
+| Calendar view | Month grid by a date property; Today; drag to move dates; "+" on day hover | ✅ |
 | Timeline view | ✗ (later) | ✗ |
-| Filters/sorts | Simple filter chips per property (operators per type), advanced groups ✗; multiple sorts with drag order | ⏳ |
-| Grouping | Table/list/board group by a property | ⏳ |
+| Filters/sorts | Simple filter chips per property (operators per type), advanced groups ✗; multiple sorts with drag order | ✅ sorts reorder with Move up instead of drag |
+| Grouping | Table/list/board group by a property | ✅ |
 
 ## 7. Collaboration and the rest
 
 | Feature | Status |
 |---|---|
-| Live updates from other members (tree, titles, content when not typing) | ⏳ |
+| Live updates from other members (tree, titles, content when not typing) | ✅ |
 | Presence avatars in the topbar | ⏳ |
-| Comments: inline (on a text range, shown with underline highlight and a margin bubble) and page-level; resolve | ⏳ |
+| Comments: inline (on a text range, shown with underline highlight and a margin bubble) and page-level; resolve | ✅ page-level; inline ⏳ |
 | Inbox: mentions of me and replies | ⏳ |
-| Search: `Ctrl+K` modal, recent pages when empty, results by title and content with highlighted match, ↑/↓/Enter, filters "Only titles" | ⏳ |
+| Search: `Ctrl+K` modal, recent pages when empty, results by title and content with highlighted match, ↑/↓/Enter, filters "Only titles" | ✅; "Only titles" ⏳ |
 | Sharing/publishing to web, guests, permissions | ✗ (single workspace, members edit; locked pages are read-only) |
 | AI | ✗ |
 | Mobile toolbar | ✗ |
