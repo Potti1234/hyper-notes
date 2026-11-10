@@ -72,6 +72,8 @@ export type Action =
   | Readonly<{ _tag: 'Enter' }>
   | Readonly<{ _tag: 'SoftBreak' }>
   | Readonly<{ _tag: 'Indent'; isOutdent: boolean }>
+  /** Ctrl+Enter in a code block: a new text block below, with the caret in it. */
+  | Readonly<{ _tag: 'LeaveBlock' }>
   | Readonly<{ _tag: 'ToggleMark'; mark: ToggleMark }>
   | Readonly<{ _tag: 'SetLink'; url: string | null }>
   | Readonly<{ _tag: 'SetTextColor'; color: Color }>
@@ -385,6 +387,22 @@ const deleteForward = (state: EditorState, unit: Unit): EditorState => {
   return withHistory(state, { ...state, doc }, 'none')
 }
 
+/** Tab in a code block types two spaces; Shift+Tab takes up to two from the start of the line. */
+const codeIndent = (state: EditorState, isOutdent: boolean): EditorState | null => {
+  const { selection } = state
+  if (selection._tag !== 'TextSelection' || selection.anchor.blockId !== selection.focus.blockId) return null
+  const target = B.find(state.doc, selection.focus.blockId)
+  if (target === null || target.kind._tag !== 'Code') return null
+  if (!isOutdent) return insertText(state, '  ')
+  const offset = ordered(state.doc, selection)[0].offset
+  const value = T.caretText(target.text)
+  const lineStart = value.lastIndexOf('\n', offset - 1) + 1
+  const spaces = value.slice(lineStart, lineStart + 2) === '  ' ? 2 : value[lineStart] === ' ' ? 1 : 0
+  if (spaces === 0) return state
+  const doc = B.update(state.doc, target.id, entry => ({ ...entry, text: T.remove(entry.text, lineStart, lineStart + spaces) }))
+  return withHistory(state, { ...state, doc, selection: caret(target.id, Math.max(lineStart, offset - spaces)) }, 'none')
+}
+
 const enter = (state: EditorState): EditorState => {
   if (state.selection._tag === 'BlockSelection') return apply(state, { _tag: 'EditSelectedBlock' })
   const deleted = deleteSelection(state)
@@ -494,10 +512,19 @@ export const apply = (state: EditorState, action: Action): EditorState => {
     case 'Enter': return enter(state)
     case 'SoftBreak': return insertText(state, '\n')
     case 'Indent': {
+      const inCode = codeIndent(state, action.isOutdent)
+      if (inCode !== null) return inCode
       const blockIds = targetIds(state)
       let doc = state.doc
       for (const blockId of action.isOutdent ? [...blockIds].reverse() : blockIds) doc = action.isOutdent ? B.outdent(doc, blockId) : B.indent(doc, blockId)
       return withHistory(state, { ...state, doc }, 'none')
+    }
+    case 'LeaveBlock': {
+      const point = caretPoint(state)
+      if (point === null) return state
+      const id = ids(state)
+      const fresh = B.paragraph(id.next())
+      return withHistory(state, { ...state, doc: B.insertAfter(state.doc, point.blockId, [fresh]), idCount: id.count(), selection: caret(fresh.id, 0), menu: { _tag: 'NoMenu' } }, 'none')
     }
     case 'ToggleMark': return toggleMark(state, action.mark)
     case 'SetLink': return mapTextRange(state, (text, from, to) => (from === to ? text : T.setLink(text, from, to, action.url)))

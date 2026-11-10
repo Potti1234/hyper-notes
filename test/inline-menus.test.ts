@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import * as B from '../src/app/editor/blocks'
-import { inlineMenuItems, linkChoices, linkUnderCaret, normalizeLink } from '../src/app/editor/menus'
+import { CODE_LANGUAGES, iconChoices, inlineMenuItems, languageChoices, linkChoices, linkUnderCaret, normalizeLink } from '../src/app/editor/menus'
 import { type InlineMenu, caret } from '../src/app/editor/state'
 import * as T from '../src/app/editor/text'
 
@@ -73,5 +73,20 @@ describe('links', () => {
     expect(at(2)).toBeNull()
     expect(linkUnderCaret(doc, { _tag: 'TextSelection', anchor: { blockId: 'a', offset: 9 }, focus: { blockId: 'a', offset: 11 } })).toBeNull()
     expect(linkUnderCaret(doc, caret('missing', 0))).toBeNull()
+  })
+})
+
+describe('block settings', () => {
+  it('the language list filters by the typed text', () => {
+    expect(languageChoices('')).toEqual(CODE_LANGUAGES)
+    expect(languageChoices('pyt')).toEqual(['python'])
+    expect(languageChoices('script')).toEqual(['javascript', 'typescript'])
+    expect(languageChoices('zz')).toEqual([])
+  })
+
+  it('the callout icon picker filters emoji by word starts', () => {
+    expect(iconChoices('')).toHaveLength(30)
+    expect(iconChoices('rock').map(entry => entry.char)).toContain(String.fromCodePoint(0x1f680))
+    expect(iconChoices('qqqq')).toEqual([])
   })
 })

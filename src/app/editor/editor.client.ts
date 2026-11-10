@@ -10,7 +10,7 @@ import { link } from '../../ui/link'
 import { blockAt, readSelection, writeSelection } from './dom.client'
 import { EditorEvent, EditorProps, MemberRef, PageRef } from './island'
 import { keyResult } from './keys'
-import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, inlineMenuItems, linkChoices, linkUnderCaret, slashItems } from './menus'
+import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, iconChoices, inlineMenuItems, languageChoices, linkChoices, linkUnderCaret, slashItems } from './menus'
 import { ANCHOR, colorClass, context, renderDocument } from './render'
 import { type Block, type Color, Document, type ToggleMark, hasText } from './schema'
 import { type Action, EditorState, type InlineMenu, Selection, apply, caret, initial, isCollapsed, ordered, targetIds } from './state'
@@ -30,7 +30,7 @@ export const Overlay = S.Union([
   S.TaggedStruct('BlockMenu', { blockId: S.String, query: S.String, active: S.Number }),
   S.TaggedStruct('ColorMenu', { active: S.Number }),
   /** Typing into a small field: a link (Ctrl+K), a media URL, an equation or a code language. */
-  S.TaggedStruct('Prompt', { field: S.Literals(['link', 'url', 'tex', 'language', 'page']), blockId: S.String, value: S.String, active: S.Number }),
+  S.TaggedStruct('Prompt', { field: S.Literals(['link', 'url', 'tex', 'language', 'page', 'icon']), blockId: S.String, value: S.String, active: S.Number }),
 ])
 export type Overlay = typeof Overlay.Type
 
@@ -269,7 +269,14 @@ const submitPrompt = (model: Model, overlay: Extract<Overlay, { _tag: 'Prompt' }
       return act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { ...target.kind, url } }, closed)
     }
     case 'tex': return target?.kind._tag === 'Equation' ? act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { _tag: 'Equation', tex: overlay.value } }, closed) : { model: { ...model, overlay: closed } }
-    case 'language': return target?.kind._tag === 'Code' ? act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { ...target.kind, language: value || 'plain text' } }, closed) : { model: { ...model, overlay: closed } }
+    case 'language': {
+      const language = languageChoices(overlay.value)[overlay.active]
+      return target?.kind._tag === 'Code' && language !== undefined ? act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { ...target.kind, language } }, closed) : { model: { ...model, overlay: closed } }
+    }
+    case 'icon': {
+      const icon = iconChoices(overlay.value)[overlay.active]
+      return target?.kind._tag === 'Callout' && icon !== undefined ? act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { _tag: 'Callout', icon: icon.char } }, closed) : { model: { ...model, overlay: closed } }
+    }
   }
 }
 
@@ -279,6 +286,8 @@ const menuLength = (model: Model): number => {
   if (overlay._tag === 'ColorMenu') return COLORS.length
   if (overlay._tag === 'Prompt' && overlay.field === 'page') return visiblePages(model, overlay.value).length
   if (overlay._tag === 'Prompt' && overlay.field === 'link') return linkChoices(overlay.value, model.pages, model.pageId).length
+  if (overlay._tag === 'Prompt' && overlay.field === 'language') return languageChoices(overlay.value).length
+  if (overlay._tag === 'Prompt' && overlay.field === 'icon') return iconChoices(overlay.value).length
   const menu = model.editor.menu
   return menu._tag === 'SlashMenu' ? slashItems(menu.query).length : menu._tag === 'InlineMenu' ? inlineItems(model, menu).length : 0
 }
@@ -383,6 +392,7 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
         const blockId = focusBlock(model.editor)
         const target = blockId === null ? null : B.find(model.editor.doc, blockId)
         if (target === null) return { model }
+        if (target.kind._tag === 'Code') return act(model, { _tag: 'LeaveBlock' })
         return target.kind._tag === 'Todo' ? act(model, { _tag: 'ToggleTodo', blockId: target.id }) : act(model, { _tag: 'ToggleOpen', blockId: target.id })
       },
       OpenedBlockMenu: ({ blockId }) => {
@@ -414,6 +424,8 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
           }
           case 'media-url': return model.isEditable ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'url', blockId, value: 'url' in target.kind ? target.kind.url : '', active: 0 } } } : { model }
           case 'equation': return model.isEditable && target.kind._tag === 'Equation' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'tex', blockId, value: target.kind.tex, active: 0 } } } : { model }
+          case 'callout-icon': return model.isEditable && target.kind._tag === 'Callout' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'icon', blockId, value: '', active: 0 } } } : { model }
+          case 'code-copy': return target.kind._tag === 'Code' ? { model, commands: [CopyText({ text: T.plainText(target.text) })] } : { model }
           case 'code-language': return model.isEditable && target.kind._tag === 'Code' ? { model: { ...model, overlay: { _tag: 'Prompt', field: 'language', blockId, value: '', active: 0 } } } : { model }
           default: return { model }
         }
@@ -773,9 +785,11 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
       ])), 'top')]
   }
   if (overlay._tag === 'Prompt') {
-    const title = { link: 'Paste link or search pages', url: 'Paste a link', tex: 'TeX equation', language: 'Language', page: 'Link to page' }[overlay.field]
+    const title = { link: 'Paste link or search pages', url: 'Paste a link', tex: 'TeX equation', language: 'Language', page: 'Link to page', icon: 'Search emoji' }[overlay.field]
     const pages = overlay.field === 'page' ? visiblePages(model, overlay.value) : []
     const links = overlay.field === 'link' ? linkChoices(overlay.value, model.pages, model.pageId) : []
+    const languages = overlay.field === 'language' ? languageChoices(overlay.value) : []
+    const icons = overlay.field === 'icon' ? iconChoices(overlay.value) : []
     return [panel(h, 'nb-prompt', [
       h.div([h.Class('nb-menu-heading')], [title]),
       h.div([h.Class('nb-menu-search nb-prompt-value'), h.Attribute('data-prompt', overlay.field)], [overlay.value === '' ? '…' : overlay.value]),
@@ -784,6 +798,8 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
         ...(choice.group !== links[index - 1]?.group ? [h.div([h.Class('nb-menu-heading')], [choice.group])] : []),
         menuRow(h, index, overlay.active, choice.label, choice.group === 'Link' ? 'Link' : ''),
       ]),
+      ...languages.map((language, index) => menuRow(h, index, overlay.active, language)),
+      ...icons.map((entry, index) => menuRow(h, index, overlay.active, `${entry.char} ${entry.name}`)),
       h.div([h.Class('nb-menu-hint')], ['Enter to confirm, Esc to close']),
     ])]
   }

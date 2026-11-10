@@ -1,4 +1,4 @@
-import { EMOJI } from '../emoji'
+import { EMOJI, type Emoji } from '../emoji'
 import type { MemberRef, PageRef } from './island'
 import { addDays, formatDate } from './render'
 import type { Color, Inline, KindTag } from './schema'
@@ -141,4 +141,23 @@ export const linkUnderCaret = (doc: Document, selection: Selection): LinkSpot | 
   if (block === null || range === null) return null
   const url = T.linkAt(block.text, range[0], range[1])
   return url === null ? null : { blockId: block.id, from: range[0], to: range[1], url }
+}
+
+// BLOCK SETTINGS
+
+export const CODE_LANGUAGES: ReadonlyArray<string> = [
+  'plain text', 'bash', 'c', 'c#', 'c++', 'css', 'diff', 'docker', 'go', 'graphql', 'html', 'java', 'javascript', 'json',
+  'kotlin', 'markdown', 'mermaid', 'php', 'python', 'ruby', 'rust', 'sql', 'swift', 'typescript', 'yaml',
+]
+
+/** The code block's language list, filtered by the typed text. */
+export const languageChoices = (query: string): ReadonlyArray<string> => {
+  const needle = query.trim().toLowerCase()
+  return CODE_LANGUAGES.filter(language => language.includes(needle))
+}
+
+/** The callout's icon picker: emoji whose name has a word starting with the typed text. */
+export const iconChoices = (query: string): ReadonlyArray<Emoji> => {
+  const needle = query.trim().toLowerCase()
+  return EMOJI.filter(entry => needle === '' || entry.name.split(' ').some(word => word.startsWith(needle))).slice(0, 30)
 }

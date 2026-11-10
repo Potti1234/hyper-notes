@@ -150,6 +150,7 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
     case 'Callout': return [control(h, 'callout-icon', target.id, 'nb-callout-icon', [kind.icon], 'Change icon'), text(target, ctx, h)]
     case 'Code': return [
       h.span([h.Class('nb-code-language'), h.Attribute('contenteditable', 'false'), h.Attribute('data-action', 'code-language'), h.Attribute('data-block', target.id)], [kind.language]),
+      control(h, 'code-copy', target.id, 'nb-code-copy', ['Copy'], 'Copy code'),
       h.pre([h.Class((kind.isWrapped ? 'nb-pre nb-wrap' : 'nb-pre'))], [text(target, ctx, h, 'code')]),
     ]
     case 'Divider': return [h.hr([h.Class('nb-divider'), h.Attribute('contenteditable', 'false')])]

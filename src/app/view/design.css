@@ -121,6 +121,7 @@
 .nb-callout > .nb-row { padding: 14px 16px; border-radius: 4px; background: var(--muted); }
 .nb-callout-icon { font-size: 1.2em; cursor: pointer; padding-top: 2px; }
 .nb-code > .nb-row { flex-direction: column; background: var(--muted); border-radius: 4px; padding: 28px 16px 16px; position: relative; }
+.nb-code-copy { position: absolute; top: 6px; right: 12px; font-size: 12px; color: var(--muted-foreground); cursor: pointer; }
 .nb-code-language { position: absolute; top: 6px; left: 12px; font-size: 12px; color: var(--muted-foreground); cursor: pointer; }
 .nb-pre { margin: 0; width: 100%; font-family: var(--font-mono, ui-monospace, monospace); font-size: 14px; white-space: pre; overflow-x: auto; }
 .nb-pre.nb-wrap { white-space: pre-wrap; }

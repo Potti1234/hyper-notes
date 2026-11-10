@@ -3,6 +3,7 @@ import { assert, describe, it } from '@effect/vitest'
 import * as B from '@/app/editor/blocks'
 import { type Action, type EditorState, apply, caret, initial } from '@/app/editor/state'
 import { caretText, hasMark } from '@/app/editor/text'
+import * as T from '@/app/editor/text'
 import type { Document } from '@/app/editor/schema'
 
 /* The editor's keys and inputs, as Notion handles them, on the pure state
@@ -234,5 +235,33 @@ describe('editor: @ mentions and : emoji', () => {
   it('no menus open inside code', () => {
     const code = { ...initial([B.block('c', { _tag: 'Code', language: 'ts', isWrapped: false }, [])], 'n'), selection: caret('c', 0) }
     assert.strictEqual(type(code, 'a @b :c /d').menu._tag, 'NoMenu')
+  })
+})
+
+describe('editor: code blocks', () => {
+  const code = (text: string, offset: number) => ({ ...initial([{ ...B.block('c', { _tag: 'Code', language: 'ts', isWrapped: false }), text: T.plain(text) }], 'n'), selection: caret('c', offset) })
+
+  it('Tab types two spaces and Shift+Tab takes them from the start of the line', () => {
+    const tabbed = run(code('a\nb', 2), { _tag: 'Indent', isOutdent: false })
+    assert.strictEqual(textOf(tabbed, 'c'), 'a\n  b')
+    assert.deepStrictEqual(tabbed.selection, caret('c', 4))
+    const back = run(tabbed, { _tag: 'Indent', isOutdent: true })
+    assert.strictEqual(textOf(back, 'c'), 'a\nb')
+    assert.deepStrictEqual(back.selection, caret('c', 2))
+    assert.strictEqual(run(back, { _tag: 'Indent', isOutdent: true }), back)
+    assert.strictEqual(textOf(run(code(' x', 2), { _tag: 'Indent', isOutdent: true }), 'c'), 'x')
+  })
+
+  it('Tab in a code block does not nest it', () => {
+    const doc = [B.paragraph('a', 'x'), { ...B.block('c', { _tag: 'Code', language: 'ts', isWrapped: false }), text: T.plain('y') }]
+    const state = run({ ...initial(doc, 'n'), selection: caret('c', 1) }, { _tag: 'Indent', isOutdent: false })
+    assert.deepStrictEqual(state.doc.map(entry => entry.id), ['a', 'c'])
+  })
+
+  it('LeaveBlock puts a new text block below with the caret in it, undoably', () => {
+    const left = run(code('a', 1), { _tag: 'LeaveBlock' })
+    assert.deepStrictEqual(left.doc.map(entry => entry.kind._tag), ['Code', 'Paragraph'])
+    assert.deepStrictEqual(left.selection, caret(left.doc[1]!.id, 0))
+    assert.strictEqual(run(left, { _tag: 'Undo' }).doc.length, 1)
   })
 })
