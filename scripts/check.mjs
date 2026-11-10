@@ -74,24 +74,25 @@ try {
   check('the workspace section lists the top-level pages in order', workspace.join() === 'demo-getting-started,demo-wiki,demo-meetings', workspace.join())
   check('a private page shows only for its owner', (await rows(avery.page, 'private')).includes('demo-journal') && !(await rows(morgan.page, 'private')).includes('demo-journal'))
   check('closed pages hide their children', !(await rows(morgan.page, 'workspace')).includes('demo-onboarding'))
-  await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
-  await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
-  check('opening a page in the sidebar shows its children', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') !== null))
-  check('opening is per person', (await rows(morgan.page, 'workspace')).includes('demo-onboarding') === false)
-  // The toggle carries the state it changes to: click it once the closing one is rendered.
-  await until(avery.page, () => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label')?.startsWith('Close') === true)
-  await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
-  await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
-  // A click that lands while the sidebar region is being swapped can be lost; say so and click once more.
-  if (!(await avery.page.waitForFunction(() => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null, null, { timeout: 2000 }).then(() => true, () => false))) {
-    // Only a toggle that still says Close may be clicked again: a slow close renders "Open", and clicking that would reopen it.
-    if (await avery.page.evaluate(() => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label')?.startsWith('Close') === true)) {
-      console.log('NOTE the close click was lost; clicking again')
-      await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
-      await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+  // The demo opened Wiki for Avery. The toggle carries the state it changes to, so click it only while it says so,
+  // and click again if a click landed while the sidebar region was being swapped.
+  const toggleWiki = async isOpen => {
+    const shows = () => avery.page.waitForFunction(isOpen => (document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') !== null) === isOpen, isOpen, { timeout: 3000 }).then(() => true, () => false)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const label = await avery.page.evaluate(() => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label') ?? '')
+      if (label.startsWith(isOpen ? 'Open' : 'Close')) {
+        if (attempt > 0) console.log(`NOTE the ${isOpen ? 'open' : 'close'} click was lost; clicking again`)
+        await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
+        await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+      }
+      if (await shows()) return true
     }
+    console.log('DIAG sidebar toggle', await avery.page.evaluate(() => JSON.stringify({ label: document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label') ?? null, rows: [...document.querySelectorAll('#sidebar [data-nav-row]')].map(row => row.getAttribute('data-nav-row')) })))
+    return false
   }
-  check('closing hides them again', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null))
+  check('closing a page in the sidebar hides its children', await toggleWiki(false))
+  check('opening shows them again', await toggleWiki(true))
+  check('opening is per person', (await rows(morgan.page, 'workspace')).includes('demo-onboarding') === false)
 
   // A PAGE
   await visit(avery.page, '/p/demo-onboarding')
@@ -183,6 +184,13 @@ try {
   check('typing in ••• searches its actions', await until(avery.page, () => [...document.querySelectorAll('#picker [role="option"]')].map(row => row.textContent?.trim()).join('|') === 'Move to Trash'))
   await avery.page.keyboard.press('Escape')
   await until(avery.page, () => document.querySelector('#picker') === null)
+  await avery.page.locator('#page-options').click()
+  await until(avery.page, () => document.querySelector('#picker [data-value="export"]') !== null)
+  const download = await Promise.all([avery.page.waitForEvent('download', { timeout: TIMEOUT }), avery.page.locator('#picker [data-value="export"]').click()]).then(([file]) => file, () => null)
+  const markdown = download === null ? '' : await import('node:fs/promises').then(fs => download.path().then(path => fs.readFile(path, 'utf8')))
+  check('Export downloads the page as Markdown', download !== null && download.suggestedFilename().endsWith('.md') && /^# .*Release checklist/.test(markdown), download?.suggestedFilename())
+  check('and closes the menu', await until(avery.page, () => document.querySelector('#picker') === null))
+  check('a private page can\'t be exported by someone else', await morgan.page.request.get(new URL('/export/demo-journal', morgan.page.url()).href).then(response => response.status()) === 404)
   await openMenu(avery.page, 'workspace', copy)
   await choose(avery.page, 'Rename')
   check('Rename opens with the title to edit', await until(avery.page, () => document.querySelector('#picker[data-field="rename"]') !== null && document.querySelector('#picker-input')?.value.includes('Release checklist v2') === true))
