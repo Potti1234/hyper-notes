@@ -18,7 +18,7 @@ import { requireMember } from '../auth'
 import { EMOJI, isEmoji, pickEmoji } from '../emoji'
 import { Comment, MAX_COMMENT, Member, Page, Section, formatAgo, sidebarWidth, titleOf } from '../domain'
 import * as B from '../editor/blocks'
-import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
+import { EditorEvent, MAX_QUOTE, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import * as D from '../database'
@@ -72,8 +72,12 @@ export const History = S.Struct({ selectedId: S.NullOr(S.String), preview: S.Nul
 export type History = typeof History.Type
 
 /** The open comment box: a new discussion, a reply in one, or an edit. */
+/** Text of the page a new discussion is on: a block, a range of it, and that text. */
+export const CommentAnchor = S.Struct({ blockId: S.String, from: S.Number, to: S.Number, quote: S.String })
+export type CommentAnchor = typeof CommentAnchor.Type
+
 export const Composer = S.Union([
-  S.TaggedStruct('NewDiscussion', { text: S.String }),
+  S.TaggedStruct('NewDiscussion', { text: S.String, anchor: S.NullOr(CommentAnchor) }),
   S.TaggedStruct('Reply', { threadId: S.String, text: S.String }),
   S.TaggedStruct('Edit', { commentId: S.String, text: S.String }),
 ])
@@ -95,6 +99,8 @@ export const Model = S.Struct({
   isBacklinksOpen: S.Boolean,
   comments: S.Array(CommentEntry),
   composer: S.NullOr(Composer),
+  /** The discussion whose marked text was clicked in the editor. */
+  activeThread: S.NullOr(S.String),
   isShowingResolved: S.Boolean,
   versions: S.Array(VersionEntry),
   history: S.NullOr(History),
@@ -450,10 +456,10 @@ export const CreateSubPage = Command.define('CreateSubPage', {
 })
 
 export const AddComment = Command.define('AddComment', {
-  args: { pageId: S.String, threadId: S.NullOr(S.String), text: S.String, actorId: S.String },
+  args: { pageId: S.String, threadId: S.NullOr(S.String), anchor: S.NullOr(CommentAnchor), text: S.String, actorId: S.String },
   messages: [Message.CompletedChange, Message.FailedChange],
-  execute: ({ pageId, threadId, text, actorId }) =>
-    Workspace.use(workspace => workspace.addComment({ pageId, threadId }, text, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+  execute: ({ pageId, threadId, anchor, text, actorId }) =>
+    Workspace.use(workspace => workspace.addComment({ pageId, threadId, anchor }, text, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const EditComment = Command.define('EditComment', {
@@ -655,7 +661,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -1618,8 +1624,8 @@ const submitComment = (model: Model): UpdateReturn => {
   const closed = { ...model, composer: null }
   const actorId = model.me.id
   switch (composer._tag) {
-    case 'NewDiscussion': return { model: closed, commands: [AddComment({ pageId: page.id, threadId: null, text, actorId })] }
-    case 'Reply': return { model: closed, commands: [AddComment({ pageId: page.id, threadId: composer.threadId, text, actorId })] }
+    case 'NewDiscussion': return { model: closed, commands: [AddComment({ pageId: page.id, threadId: null, anchor: composer.anchor, text, actorId })] }
+    case 'Reply': return { model: closed, commands: [AddComment({ pageId: page.id, threadId: composer.threadId, anchor: null, text, actorId })] }
     case 'Edit': return ownComment(model, composer.commentId) === undefined ? { model: closed } : { model: closed, commands: [EditComment({ commentId: composer.commentId, text, actorId })] }
   }
 }
@@ -1706,6 +1712,12 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
           case 'ChangedContent': return { model, commands: [SaveContent({ pageId: page.id, content: event.content, actorId: model.me.id })] }
           case 'CreatedSubPage': return /^[A-Za-z0-9_-]{1,64}$/.test(event.childId) ? { model, commands: [CreateSubPage({ parentId: page.id, childId: event.childId, section: page.section, actorId: model.me.id })] } : { model }
           case 'OpenedPage': return { model }
+          case 'StartedComment':
+            return event.blockId.length > 64 || event.quote.trim() === '' || event.quote.length > MAX_QUOTE
+              ? { model }
+              : compose({ ...model, activeThread: null }, { _tag: 'NewDiscussion', text: '', anchor: { blockId: event.blockId, from: event.from, to: event.to, quote: event.quote } })
+          case 'OpenedComment':
+            return openThread(model, event.threadId)?.resolvedAt === null ? { model: focusOn({ ...model, activeThread: event.threadId }, `#reply-${event.threadId}`) } : { model }
         }
       },
       SubmittedTitle: () =>
@@ -1776,7 +1788,7 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
       },
       ClickedDismissNotice: () => ({ model: { ...model, notice: null } }),
       ClickedBacklinks: () => ({ model: { ...model, isBacklinksOpen: !model.isBacklinksOpen } }),
-      ClickedAddComment: () => compose(model, { _tag: 'NewDiscussion', text: '' }),
+      ClickedAddComment: () => compose(model, { _tag: 'NewDiscussion', text: '', anchor: null }),
       ClickedReply: ({ threadId }) => (openThread(model, threadId)?.resolvedAt === null ? compose(model, { _tag: 'Reply', threadId, text: '' }) : { model }),
       ClickedEditComment: ({ commentId }) => {
         const own = ownComment(model, commentId)
@@ -2137,7 +2149,9 @@ const commentView = (model: Model, entry: CommentEntry, isThread: boolean, h: Ht
 const threadView = (model: Model, thread: Thread, h: HtmlBuilder<Message>): Html => {
   const isResolved = thread.root.resolvedAt !== null
   const replying = model.composer?._tag === 'Reply' && model.composer.threadId === thread.root.id ? model.composer : null
-  return box({ class: cn('flex flex-col rounded-md border border-border px-3 py-2', isResolved && 'opacity-70'), attributes: [h.DataAttribute('thread', thread.root.id), ...(isResolved ? [h.DataAttribute('resolved', '')] : [])], children: [
+  const isActive = model.activeThread === thread.root.id
+  return box({ class: cn('flex flex-col rounded-md border border-border px-3 py-2', isResolved && 'opacity-70', isActive && 'border-yellow-500/70 ring-1 ring-yellow-500/40'), attributes: [h.DataAttribute('thread', thread.root.id), ...(isResolved ? [h.DataAttribute('resolved', '')] : []), ...(isActive ? [h.DataAttribute('active', '')] : [])], children: [
+      ...(thread.root.quote === null ? [] : [quoteView(thread.root.quote, h)]),
       commentView(model, thread.root, true, h),
       ...thread.replies.map(reply => commentView(model, reply, false, h)),
       ...(replying !== null
@@ -2145,6 +2159,10 @@ const threadView = (model: Model, thread: Thread, h: HtmlBuilder<Message>): Html
         : isResolved || !canComment(model) ? [] : [box({ class: 'self-start pl-6', children: [button({ variant: 'ghost', size: 'compact', id: `reply-${thread.root.id}`, onClick: Message.ClickedReply({ threadId: thread.root.id }), children: [Icon.icon('corner-up-left', { class: 'size-3.5' }, h), 'Reply'] }, h)] }, h)]),
     ] }, h)
 }
+
+/** The text a discussion is on, as Notion quotes it above the first comment. */
+const quoteView = (quote: string, h: HtmlBuilder<Message>): Html =>
+  box({ as: 'p', class: 'mb-1 line-clamp-2 border-l-2 border-yellow-500 pl-2 text-[13px] text-muted-foreground', attributes: [h.DataAttribute('thread-quote', '')], children: [quote] }, h)
 
 /** Page discussions under the title: open ones, then (on request) the resolved. */
 const commentsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
@@ -2155,15 +2173,19 @@ const commentsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html
   return [box({ class: 'mb-4 flex flex-col gap-2', attributes: [h.Id('page-comments')], children: [
       ...threads.filter(thread => thread.root.resolvedAt === null).map(thread => threadView(model, thread, h)),
       ...(model.isShowingResolved ? resolved.map(thread => threadView(model, thread, h)) : []),
-      ...(composer === null ? [] : [box({ class: 'rounded-md border border-border px-3 py-2', children: [composerView(composer, h)] }, h)]),
+      ...(composer === null ? [] : [box({ class: 'rounded-md border border-border px-3 py-2', children: [...(composer.anchor === null ? [] : [quoteView(composer.anchor.quote, h)]), composerView(composer, h)] }, h)]),
       ...(resolved.length === 0 ? [] : [box({ class: 'self-start', children: [button({ variant: 'ghost', size: 'compact', id: 'show-resolved', onClick: Message.ClickedShowResolved(), children: [Icon.icon('check', { class: 'size-3.5' }, h), model.isShowingResolved ? 'Hide resolved' : `${resolved.length} resolved ${resolved.length === 1 ? 'discussion' : 'discussions'}`] }, h)] }, h)]),
     ] }, h)]
 }
 
+/** Open discussions on text of the page: the editor highlights their marks. */
+const openTextThreads = (comments: ReadonlyArray<CommentEntry>): ReadonlyArray<string> =>
+  comments.filter(comment => comment.id === comment.threadId && comment.resolvedAt === null && comment.quote !== null).map(comment => comment.id)
+
 /** The page's blocks: the editor island, or read-only when locked or in Trash. */
 const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
   const isEditable = !model.isInTrash && !page.isLocked
-  const props = { pageId: page.id, content: page.content, revision: page.updatedAt, isEditable, pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: model.people, crumbs: model.crumbs, today: new Date(model.now).toISOString().slice(0, 10) }
+  const props = { pageId: page.id, content: page.content, revision: page.updatedAt, isEditable, pages: model.pages.map(({ id, title, icon }) => ({ id, title, icon })), members: model.people, crumbs: model.crumbs, threads: openTextThreads(model.comments), activeThread: model.activeThread, today: new Date(model.now).toISOString().slice(0, 10) }
   return isEditable
     ? Island.view(PageEditor, { id: `editor-${page.id}`, props, onEvent: event => Message.GotEditorEvent({ event }) }, h)
     : box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('read-only', page.id)], children: [...renderDocument(page.content, context(props), h)] }, h)
@@ -2260,7 +2282,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
-                  : region(h, { id: 'page-body', deps: [model.page, model.coverDraft, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
+                  : region(h, { id: 'page-body', deps: [model.page, model.coverDraft, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.activeThread, model.isShowingResolved, model.me.id, model.now, model.isInTrash, model.rows, model.parentDatabase, model.db, model.people], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
       ...(model.confirmDelete === null ? [] : [region(h, { id: 'confirm-delete-layer', deps: [model.confirmDelete, model.trash], render: () => confirmDeleteView(model, model.confirmDelete as string, h) })]),

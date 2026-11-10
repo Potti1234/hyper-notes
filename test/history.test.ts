@@ -16,7 +16,7 @@ import { workspaceLayer } from './support'
 const run = <A, E>(effect: Effect.Effect<A, E, Workspace>) => Effect.provide(effect, workspaceLayer())
 const NOW = Date.UTC(2026, 10, 10, 9)
 const avery = DEMO_MEMBERS.find(member => member.id === 'avery')!
-const paragraph = (text: string) => [{ id: `b-${text}`, kind: { _tag: 'Paragraph' as const }, color: 'default' as const, text: [{ _tag: 'Text' as const, text, marks: { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default' as const, link: null } }], children: [] }]
+const paragraph = (text: string) => [{ id: `b-${text}`, kind: { _tag: 'Paragraph' as const }, color: 'default' as const, text: [{ _tag: 'Text' as const, text, marks: { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default' as const, link: null, comment: null } }], children: [] }]
 
 describe('history: recordVersion', () => {
   const page = demoData(NOW).pages.find(entry => entry.id === DEMO_HOME)!

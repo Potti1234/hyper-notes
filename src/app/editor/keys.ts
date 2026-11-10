@@ -16,6 +16,7 @@ export type KeyResult =
   | Readonly<{ _tag: 'OpenLink' }>
   | Readonly<{ _tag: 'ToggleCurrent' }>
   | Readonly<{ _tag: 'OpenBlockMenu' }>
+  | Readonly<{ _tag: 'Comment' }>
 
 const act = (action: Action): KeyResult => ({ _tag: 'Act', action })
 
@@ -55,6 +56,7 @@ export const keyResult = (input: KeyInput, context: KeyContext): KeyResult | nul
     if (lower === 'a' && !shift) return act({ _tag: 'SelectAll' })
     if (lower === 'd' && !shift) return act({ _tag: 'Duplicate' })
     if (lower === 'k' && !shift) return { _tag: 'OpenLink' }
+    if (shift && lower === 'm') return { _tag: 'Comment' }
     if (shift && (lower === 's' || lower === 'x')) return act({ _tag: 'ToggleMark', mark: 'strike' })
     if (!shift && MARKS[lower] !== undefined) return act({ _tag: 'ToggleMark', mark: MARKS[lower] })
     if (shift && key === 'ArrowUp') return act({ _tag: 'MoveBy', direction: -1 })

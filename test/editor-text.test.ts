@@ -1,6 +1,8 @@
 import { assert, describe, it } from '@effect/vitest'
 
-import { PLAIN, type RichText } from '@/app/editor/schema'
+import { Schema as S } from 'effect'
+
+import { Document, PLAIN, type RichText } from '@/app/editor/schema'
 import * as T from '@/app/editor/text'
 
 const bold = { ...PLAIN, bold: true }
@@ -34,6 +36,20 @@ describe('rich text', () => {
     assert.deepStrictEqual(all, text('abcd', bold))
     assert.deepStrictEqual(T.toggleMark(all, 0, 4, 'bold'), text('abcd'))
     assert.isTrue(T.hasMark(all, 1, 3, 'bold'))
+  })
+
+  it('marks a range with a discussion that typing extends only inside it', () => {
+    const value = T.setComment(text('one two three'), 4, 7, 'c1')
+    assert.deepStrictEqual(value.map(piece => piece.marks.comment), [null, 'c1', null])
+    assert.strictEqual(T.typingMarksAt(value, 5).comment, 'c1')
+    assert.isNull(T.typingMarksAt(value, 7).comment)
+    assert.isNull(T.typingMarksAt(T.setComment(text('ab'), 0, 2, 'c1'), 0).comment)
+    assert.deepStrictEqual(T.setComment(value, 0, 13, null), text('one two three'))
+  })
+
+  it('reads documents saved before comment marks existed', () => {
+    const decoded = S.decodeUnknownSync(Document)([{ id: 'b', kind: { _tag: 'Paragraph' }, color: 'default', children: [], text: [{ _tag: 'Text', text: 'old', marks: { bold: false, italic: false, underline: false, strike: false, code: false, link: null, color: 'default' } }] }])
+    assert.isNull(decoded[0]!.text[0]!.marks.comment)
   })
 
   it('does not grow links or inline code past their end', () => {

@@ -64,6 +64,7 @@ const migrate = (sql: Sql) =>
           seq BIGSERIAL, id TEXT PRIMARY KEY, page_id TEXT NOT NULL, author_id TEXT NOT NULL, started_at BIGINT NOT NULL, at BIGINT NOT NULL,
           title TEXT NOT NULL, icon TEXT NOT NULL, content JSONB NOT NULL, is_demo BOOLEAN NOT NULL DEFAULT FALSE
         )`
+      yield* sql`ALTER TABLE comments ADD COLUMN IF NOT EXISTS quote TEXT`
       yield* sql`CREATE TABLE IF NOT EXISTS expanded (member_id TEXT NOT NULL, page_id TEXT NOT NULL, PRIMARY KEY (member_id, page_id))`
     }),
   )
@@ -106,7 +107,7 @@ const EXPANDED: Table<WorkspaceData['expanded'][number]> = { name: 'expanded', k
 
 const COMMENTS: Table<Comment> = { name: 'comments', keys: ['id'], items: data => data.comments, row: comment => ({
   id: comment.id, page_id: comment.pageId, thread_id: comment.threadId, author_id: comment.authorId, text: comment.text, created_at: comment.createdAt,
-  edited_at: comment.editedAt, resolved_at: comment.resolvedAt, resolved_by: comment.resolvedBy, is_demo: comment.isDemo,
+  edited_at: comment.editedAt, resolved_at: comment.resolvedAt, resolved_by: comment.resolvedBy, quote: comment.quote, is_demo: comment.isDemo,
 }) }
 
 const VERSIONS: Table<PageVersion> = { name: 'page_versions', keys: ['id'], items: data => data.versions, row: version => ({
@@ -199,7 +200,7 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
       comments: comments.map((row): Comment => ({
         id: String(row['id']), pageId: String(row['page_id']), threadId: String(row['thread_id']), authorId: String(row['author_id']), text: String(row['text']),
         createdAt: Number(row['created_at']), editedAt: orNull(row['edited_at']), resolvedAt: orNull(row['resolved_at']),
-        resolvedBy: row['resolved_by'] == null ? null : String(row['resolved_by']), isDemo: row['is_demo'] === true,
+        resolvedBy: row['resolved_by'] == null ? null : String(row['resolved_by']), quote: row['quote'] == null ? null : String(row['quote']), isDemo: row['is_demo'] === true,
       })),
       passwords: Object.fromEntries(members.filter(row => row['password_hash'] !== '').map(row => [String(row['id']), String(row['password_hash'])])),
     }

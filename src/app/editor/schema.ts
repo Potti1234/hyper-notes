@@ -1,4 +1,4 @@
-import { Schema as S } from 'effect'
+import { Effect, Schema as S } from 'effect'
 
 /* The document of a page: a tree of blocks, each with its own rich text.
    Plain Schemas, so a document is one JSON value that the server stores and
@@ -34,10 +34,12 @@ export const Marks = S.Struct({
   code: S.Boolean,
   link: S.NullOr(S.String.pipe(S.check(S.isMaxLength(2000)))),
   color: Color,
+  /** The open discussion this text is commented in (comments.ts); older content has none. */
+  comment: S.NullOr(S.String.pipe(S.check(S.isMaxLength(64)))).pipe(S.withDecodingDefaultKey(Effect.succeed(null))),
 })
 export type Marks = typeof Marks.Type
 
-export const PLAIN: Marks = { bold: false, italic: false, underline: false, strike: false, code: false, link: null, color: 'default' }
+export const PLAIN: Marks = { bold: false, italic: false, underline: false, strike: false, code: false, link: null, color: 'default', comment: null }
 
 export type ToggleMark = 'bold' | 'italic' | 'underline' | 'strike' | 'code'
 export const TOGGLE_MARKS: ReadonlyArray<ToggleMark> = ['bold', 'italic', 'underline', 'strike', 'code']
@@ -102,12 +104,21 @@ export interface Block {
   readonly children: ReadonlyArray<Block>
 }
 
+/** A block as stored: marks saved before a mark existed may lack it. */
+export interface BlockEncoded {
+  readonly id: string
+  readonly kind: typeof Kind.Encoded
+  readonly text: ReadonlyArray<typeof Inline.Encoded>
+  readonly color: Color
+  readonly children: ReadonlyArray<BlockEncoded>
+}
+
 export const Block = S.Struct({
   id: S.String.pipe(S.check(S.isMaxLength(64))),
   kind: Kind,
   text: S.Array(Inline),
   color: Color,
-  children: S.Array(S.suspend((): S.Codec<Block> => Block)),
+  children: S.Array(S.suspend((): S.Codec<Block, BlockEncoded> => Block)),
 })
 
 export const Document = S.Array(Block)

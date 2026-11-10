@@ -154,6 +154,8 @@
 .nb-b { font-weight: 600; } .nb-i { font-style: italic; } .nb-u { text-decoration: underline; } .nb-s { text-decoration: line-through; }
 .nb-u.nb-s { text-decoration: underline line-through; }
 .nb-c { font-family: var(--font-mono, ui-monospace, monospace); font-size: 85%; background: var(--muted); color: #eb5757; border-radius: 4px; padding: 0.2em 0.4em; }
+.nb-comment { background: rgba(255,212,0,.14); border-bottom: 2px solid rgba(255,203,0,.7); padding-bottom: 1px; cursor: pointer; }
+.nb-comment-active { background: rgba(255,212,0,.36); }
 .nb-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); cursor: pointer; }
 .nb-atom { border-radius: 4px; padding: 0 2px; background: var(--accent); user-select: all; }
 .nb-color-gray { color: #787774; } .nb-color-brown { color: #9f6b53; } .nb-color-orange { color: #d9730d; } .nb-color-yellow { color: #cb912f; } .nb-color-green { color: #448361; }

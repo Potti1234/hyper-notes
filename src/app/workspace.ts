@@ -2,7 +2,9 @@ import { Data, Effect, Schema as S } from 'effect'
 
 import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW, sidebarWidth } from './domain'
 import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf, nextId, numberRows } from './database'
-import { copyWithIds } from './editor/blocks'
+import { copyWithIds, find as findBlock, update as updateBlock } from './editor/blocks'
+import { MAX_QUOTE } from './editor/island'
+import { caretText, lengthOf, setComment, slice } from './editor/text'
 import { type Block, Document } from './editor/schema'
 
 /* The workspace's data and every change to it, as pure operations: an
@@ -451,9 +453,14 @@ const openComment = (data: WorkspaceData, commentId: string, actorId: string): E
 
 const replaceComment = (data: WorkspaceData, comment: Comment): WorkspaceData => ({ ...data, comments: data.comments.map(entry => (entry.id === comment.id ? comment : entry)) })
 
-/** A new discussion on the page (`threadId` null) or a reply in an open one. */
-export const addComment = (target: Readonly<{ pageId: string; threadId: string | null }>, text: string, actorId: string): Op<Comment, InvalidChange> => (data, { at, id }) =>
+/** Text of a block a discussion is started on: `quote` must still be what is there. */
+export type CommentAnchor = Readonly<{ blockId: string; from: number; to: number; quote: string }>
+
+/** A new discussion on the page (`threadId` null), on text of it (`anchor`, which
+ *  gets marked with the discussion), or a reply in an open one. */
+export const addComment = (target: Readonly<{ pageId: string; threadId: string | null; anchor?: CommentAnchor | null }>, text: string, actorId: string): Op<Comment, InvalidChange> => (data, context) =>
   Effect.gen(function* () {
+    const { at, id } = context
     const page = yield* visiblePage(data, target.pageId, actorId)
     if (isTrashed(data.pages, page)) return yield* invalid('Restore the page to comment on it.')
     const body = yield* commentText(text)
@@ -461,8 +468,18 @@ export const addComment = (target: Readonly<{ pageId: string; threadId: string |
     if (target.threadId !== null && thread === undefined) return yield* invalid('That discussion was deleted.')
     if (thread !== undefined && thread.resolvedAt !== null) return yield* invalid('Reopen the discussion to reply.')
     const commentId = id('comment')
-    const comment: Comment = { id: commentId, pageId: page.id, threadId: thread?.id ?? commentId, authorId: actorId, text: body, createdAt: at, editedAt: null, resolvedAt: null, resolvedBy: null, isDemo: false }
-    return [comment, { ...data, comments: [...data.comments, comment] }] as const
+    const anchor = thread === undefined ? (target.anchor ?? null) : null
+    const comment: Comment = { id: commentId, pageId: page.id, threadId: thread?.id ?? commentId, authorId: actorId, text: body, createdAt: at, editedAt: null, resolvedAt: null, resolvedBy: null, quote: anchor?.quote ?? null, isDemo: false }
+    const withComment = { ...data, comments: [...data.comments, comment] }
+    if (anchor === null) return [comment, withComment] as const
+    const block = findBlock(page.content, anchor.blockId)
+    const from = Math.min(anchor.from, anchor.to), to = Math.max(anchor.from, anchor.to)
+    const isSame = block !== null && Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to <= lengthOf(block.text) && from < to &&
+      anchor.quote.length <= MAX_QUOTE && caretText(slice(block.text, from, to)) === anchor.quote
+    if (!isSame) return yield* invalid('That text changed. Select it again to comment on it.')
+    const content = updateBlock(page.content, anchor.blockId, entry => ({ ...entry, text: setComment(entry.text, from, to, commentId) }))
+    const [, next] = yield* updatePage(page.id, { content }, actorId)(withComment, context)
+    return [comment, next] as const
   })
 
 export const editComment = (commentId: string, text: string, actorId: string): Op<Comment, InvalidChange> => (data, { at }) =>
@@ -476,13 +493,21 @@ export const editComment = (commentId: string, text: string, actorId: string): O
   })
 
 /** Deletes a comment; a discussion's first comment takes the discussion along. */
-export const deleteComment = (commentId: string, actorId: string): Op<number, InvalidChange> => data =>
+export const deleteComment = (commentId: string, actorId: string): Op<number, InvalidChange> => (data, { at }) =>
   Effect.gen(function* () {
     const comment = yield* openComment(data, commentId, actorId)
     if (comment.authorId !== actorId) return yield* invalid('Only its author can delete a comment.')
     const isThread = comment.id === comment.threadId
     const comments = data.comments.filter(entry => entry.id !== comment.id && !(isThread && entry.threadId === comment.id))
-    return [data.comments.length - comments.length, { ...data, comments }] as const
+    // The text it was on loses its mark (a new revision, so open editors take it).
+    const page = data.pages.find(entry => entry.id === comment.pageId)
+    const isMarked = isThread && page !== undefined && JSON.stringify(page.content).includes(`"comment":${JSON.stringify(comment.id)}`)
+    const pages = !isMarked ? data.pages : replacePages(data.pages, [{
+      ...page,
+      content: JSON.parse(JSON.stringify(page.content), (key, value: unknown) => (key === 'comment' && value === comment.id ? null : value)) as Page['content'],
+      updatedAt: at,
+    }])
+    return [data.comments.length - comments.length, { ...data, comments, pages }] as const
   })
 
 /** Resolves or reopens a discussion; anyone who sees the page may. */

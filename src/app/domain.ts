@@ -148,6 +148,8 @@ export const Comment = S.Struct({
   editedAt: S.NullOr(S.Number),
   resolvedAt: S.NullOr(S.Number),
   resolvedBy: S.NullOr(S.String),
+  /** The text a discussion was started on (marked with its id in the page), or null for the page itself. */
+  quote: S.NullOr(S.String),
   isDemo: S.Boolean,
 })
 export type Comment = typeof Comment.Type

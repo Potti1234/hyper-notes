@@ -54,6 +54,9 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.deepStrictEqual(state.versions.filter(version => version.pageId === child.id).map(version => version.content), [[], [paragraph('p1', 'Saved in Postgres')]])
       assert.deepStrictEqual(state.comments.filter(comment => comment.pageId === child.id).map(comment => [comment.text, comment.resolvedBy]), [['Stored comment', 'morgan']])
 
+      const kept = yield* one.createPage({ parentId: null, section: 'workspace', title: 'Kept' }, 'avery')
+      yield* one.updatePage(kept.id, { content: [paragraph('k1', 'Quoted words')] }, 'avery')
+      const quoted = yield* one.addComment({ pageId: kept.id, threadId: null, anchor: { blockId: 'k1', from: 0, to: 6, quote: 'Quoted' } }, 'On text', 'morgan')
       yield* two.trashPage(child.id, 'morgan')
       yield* two.deletePage(child.id, 'morgan')
       yield* one.changes.pipe(Stream.filter(entry => !entry.pages.some(page => page.id === child.id)), Stream.runHead, Effect.timeout('5 seconds'))
@@ -63,6 +66,8 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.isFalse(reloaded.favorites.some(row => row.pageId === child.id))
       assert.isFalse(reloaded.comments.some(comment => comment.pageId === child.id))
       assert.isFalse(reloaded.versions.some(version => version.pageId === child.id))
+      assert.strictEqual(reloaded.comments.find(comment => comment.id === quoted.id)?.quote, 'Quoted')
+      assert.deepStrictEqual(reloaded.pages.find(page => page.id === kept.id)?.content[0]?.text.map(piece => piece.marks.comment), [quoted.id, null])
     })))
 
   it.live('stores databases and the values of their rows', () =>

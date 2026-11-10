@@ -201,7 +201,7 @@ describe('editor: blocks, menus and history', () => {
 })
 
 describe('editor: @ mentions and : emoji', () => {
-  const PLAIN = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null } as const
+  const PLAIN = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null, comment: null } as const
 
   it('"@" after a space opens the mention menu, which follows the query and closes when the "@" goes', () => {
     const opened = type(at([B.paragraph('a')], 'a', 0), 'Hi @mor')

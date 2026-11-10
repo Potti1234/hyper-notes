@@ -24,11 +24,14 @@ export type RenderContext = Readonly<{
   epoch: number
   /** Element ids are `<prefix><block id>`; a second rendering on the same page (a version preview) needs its own. */
   blockIdPrefix: string
+  /** Open discussions whose comment marks are highlighted, and the one being read. */
+  threads: ReadonlySet<string>
+  activeThread: string | null
 }>
 
 export const ANCHOR = '--nb-anchor'
 
-export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members: ReadonlyArray<MemberRef>; crumbs: ReadonlyArray<PageRef>; isEditable: boolean; blockIdPrefix?: string }>, selected: ReadonlyArray<string> = [], focusedId: string | null = null, anchorId: string | null = null, epoch = 0): RenderContext => ({
+export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members: ReadonlyArray<MemberRef>; crumbs: ReadonlyArray<PageRef>; isEditable: boolean; blockIdPrefix?: string; threads?: ReadonlyArray<string>; activeThread?: string | null }>, selected: ReadonlyArray<string> = [], focusedId: string | null = null, anchorId: string | null = null, epoch = 0): RenderContext => ({
   pages: new Map(props.pages.map(page => [page.id, page])),
   members: new Map(props.members.map(member => [member.id, member])),
   crumbs: props.crumbs,
@@ -38,6 +41,8 @@ export const context = (props: Readonly<{ pages: ReadonlyArray<PageRef>; members
   anchorId,
   epoch,
   blockIdPrefix: props.blockIdPrefix ?? 'block-',
+  threads: new Set(props.threads ?? []),
+  activeThread: props.activeThread ?? null,
 })
 
 const COLOR_CLASS: Readonly<Record<Color, string>> = {
@@ -81,9 +86,11 @@ const atom = <Msg>(h: HtmlBuilder<Msg>, marks: Marks, kind: string, attributes: 
 const inline = <Msg>(piece: Inline, ctx: RenderContext, h: HtmlBuilder<Msg>): Html | string => {
   switch (piece._tag) {
     case 'Text': {
-      const name = markClass(piece.marks)
-      if (piece.marks.link !== null) return h.a([h.Class(['nb-link', name].join(' ')), h.Href(piece.marks.link), h.Attribute('data-link', piece.marks.link)], [piece.text])
-      return name === '' ? piece.text : h.span([h.Class(name)], [piece.text])
+      const thread = piece.marks.comment !== null && ctx.threads.has(piece.marks.comment) ? piece.marks.comment : null
+      const name = [markClass(piece.marks), thread === null ? '' : thread === ctx.activeThread ? 'nb-comment nb-comment-active' : 'nb-comment'].filter(part => part !== '').join(' ')
+      const marker = thread === null ? [] : [h.Attribute('data-comment-thread', thread)]
+      if (piece.marks.link !== null) return h.a([h.Class(['nb-link', name].join(' ')), h.Href(piece.marks.link), h.Attribute('data-link', piece.marks.link), ...marker], [piece.text])
+      return name === '' ? piece.text : h.span([h.Class(name), ...marker], [piece.text])
     }
     case 'PageMention': {
       const page = ctx.pages.get(piece.pageId)

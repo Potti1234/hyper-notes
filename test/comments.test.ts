@@ -1,6 +1,8 @@
 import { assert, describe, it } from '@effect/vitest'
 import { Effect } from 'effect'
 
+import { find, paragraph } from '@/app/editor/blocks'
+import { setColor } from '@/app/editor/text'
 import * as PagePage from '@/app/page/page'
 import { DEMO_HOME, DEMO_MEMBERS, demoData } from '@/app/seed'
 import { Workspace } from '@/app/store'
@@ -49,6 +51,39 @@ describe('workspace: comments', () => {
       assert.isFalse((yield* workspace.current).comments.some(comment => comment.pageId === page.id))
     })))
 
+  it.effect('a discussion on selected text marks that text, and deleting it clears the mark', () =>
+    run(Effect.gen(function* () {
+      const workspace = yield* Workspace
+      const page = yield* workspace.createPage({ parentId: null, section: 'workspace', title: 'Notes' }, 'avery')
+      yield* workspace.updatePage(page.id, { content: [paragraph('b1', 'Hello brave world')] }, 'avery')
+      const anchor = { blockId: 'b1', from: 6, to: 11, quote: 'brave' }
+      const thread = yield* workspace.addComment({ pageId: page.id, threadId: null, anchor }, 'Too bold?', 'morgan')
+      assert.strictEqual(thread.quote, 'brave')
+      const marked = (yield* workspace.current).pages.find(entry => entry.id === page.id)!
+      assert.deepStrictEqual(find(marked.content, 'b1')!.text.map(piece => [piece._tag === 'Text' ? piece.text : '', piece.marks.comment]), [['Hello ', null], ['brave', thread.id], [' world', null]])
+      const reply = yield* workspace.addComment({ pageId: page.id, threadId: thread.id, anchor }, 'Fine by me', 'avery')
+      assert.isNull(reply.quote)
+      assert.strictEqual((yield* Effect.flip(workspace.addComment({ pageId: page.id, threadId: null, anchor: { ...anchor, quote: 'bravo' } }, 'Hm', 'avery'))).reason, 'That text changed. Select it again to comment on it.')
+      assert.strictEqual((yield* Effect.flip(workspace.addComment({ pageId: page.id, threadId: null, anchor: { ...anchor, to: 99 } }, 'Hm', 'avery'))).reason, 'That text changed. Select it again to comment on it.')
+      assert.strictEqual((yield* Effect.flip(workspace.addComment({ pageId: page.id, threadId: null, anchor: { ...anchor, blockId: 'nope' } }, 'Hm', 'avery'))).reason, 'That text changed. Select it again to comment on it.')
+      yield* workspace.deleteComment(thread.id, 'morgan')
+      const cleared = (yield* workspace.current).pages.find(entry => entry.id === page.id)!
+      assert.isTrue(find(cleared.content, 'b1')!.text.every(piece => piece.marks.comment === null))
+    })))
+
+  it.effect('the mark keeps other marks and a locked page takes no text discussions', () =>
+    run(Effect.gen(function* () {
+      const workspace = yield* Workspace
+      const page = yield* workspace.createPage({ parentId: null, section: 'workspace', title: 'Locked' }, 'avery')
+      const block = paragraph('b1', 'Red text')
+      yield* workspace.updatePage(page.id, { content: [{ ...block, text: setColor(block.text, 0, 3, 'red') }] }, 'avery')
+      const thread = yield* workspace.addComment({ pageId: page.id, threadId: null, anchor: { blockId: 'b1', from: 0, to: 8, quote: 'Red text' } }, 'Why red?', 'avery')
+      const marked = find((yield* workspace.current).pages.find(entry => entry.id === page.id)!.content, 'b1')!
+      assert.deepStrictEqual(marked.text.map(piece => [piece.marks.color, piece.marks.comment]), [['red', thread.id], ['default', thread.id]])
+      yield* workspace.updatePage(page.id, { isLocked: true }, 'avery')
+      assert.strictEqual((yield* Effect.flip(workspace.addComment({ pageId: page.id, threadId: null, anchor: { blockId: 'b1', from: 0, to: 3, quote: 'Red' } }, 'Hm', 'avery')))._tag, 'InvalidChange')
+    })))
+
   it.effect('private pages take comments only from their owner', () =>
     run(Effect.gen(function* () {
       const workspace = yield* Workspace
@@ -74,7 +109,7 @@ describe('page: comments', () => {
 
   it('opens a focused comment box, sends it once there is text, and closes it', () => {
     const opened = PagePage.update(model(), PagePage.Message.ClickedAddComment())
-    assert.deepStrictEqual(opened.model.composer, { _tag: 'NewDiscussion', text: '' })
+    assert.deepStrictEqual(opened.model.composer, { _tag: 'NewDiscussion', text: '', anchor: null })
     assert.deepStrictEqual(tags(opened), ['FocusElement'])
     assert.deepStrictEqual(tags(PagePage.update(opened.model, PagePage.Message.SubmittedComment())), [])
     const typed = PagePage.update(opened.model, PagePage.Message.ChangedComment({ text: 'Hello' })).model
@@ -82,6 +117,19 @@ describe('page: comments', () => {
     assert.isNull(sent.model.composer)
     assert.deepStrictEqual(tags(sent), ['AddComment'])
     assert.isNull(PagePage.update(typed, PagePage.Message.ClickedCancelComment()).model.composer)
+  })
+
+  it('selected text opens a box quoting it, sends the range, and a marked click shows its discussion', () => {
+    const event = { _tag: 'StartedComment' as const, pageId: DEMO_HOME, blockId: 'b1', from: 2, to: 6, quote: 'text' }
+    const opened = PagePage.update(model(), PagePage.Message.GotEditorEvent({ event }))
+    assert.deepStrictEqual(opened.model.composer, { _tag: 'NewDiscussion', text: '', anchor: { blockId: 'b1', from: 2, to: 6, quote: 'text' } })
+    assert.isNull(PagePage.update(model(), PagePage.Message.GotEditorEvent({ event: { ...event, quote: '  ' } })).model.composer)
+    const typed = PagePage.update(opened.model, PagePage.Message.ChangedComment({ text: 'Why?' })).model
+    const sent = PagePage.update(typed, PagePage.Message.SubmittedComment())
+    assert.deepStrictEqual((sent.commands ?? []).map(command => [command.name, (command.args as { anchor?: unknown }).anchor]), [['AddComment', { blockId: 'b1', from: 2, to: 6, quote: 'text' }]])
+    const shown = PagePage.update(model(), PagePage.Message.GotEditorEvent({ event: { _tag: 'OpenedComment', pageId: DEMO_HOME, threadId: 'demo-comment-1' } }))
+    assert.strictEqual(shown.model.activeThread, 'demo-comment-1')
+    assert.isNull(PagePage.update(model(), PagePage.Message.GotEditorEvent({ event: { _tag: 'OpenedComment', pageId: DEMO_HOME, threadId: 'nope' } })).model.activeThread)
   })
 
   it('replies in open discussions, edits and deletes only your own comments', () => {

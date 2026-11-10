@@ -135,7 +135,7 @@ emoji.
 |---|---|
 | Live updates from other members (tree, titles, content when not typing) | ✅ |
 | Presence avatars in the topbar | ✅ avatars of the others on the page, live; name on hover |
-| Comments: inline (on a text range, shown with underline highlight and a margin bubble) and page-level; resolve | ✅ page-level; inline ⏳ |
+| Comments: inline (on a text range, shown with underline highlight and a margin bubble) and page-level; resolve | ✅ page-level and on selected text (toolbar Comment or `Ctrl+Shift+M`; yellow mark, quote above the discussion, click to show it; resolving or deleting clears the mark) |
 | Inbox: mentions of me and replies | ⏳ |
 | Search: `Ctrl+K` modal, recent pages when empty, results by title and content with highlighted match, ↑/↓/Enter, filters "Only titles" | ✅ including "Only titles" |
 | Sharing/publishing to web, guests, permissions | ✗ (single workspace, members edit; locked pages are read-only) |

@@ -377,6 +377,23 @@ try {
   await avery.page.locator(`#delete-${threadId}`).click()
   check('deleting the first comment removes the discussion for everyone', await until(morgan.page, () => document.querySelector('#page-comments') === null))
 
+  // INLINE COMMENTS: a discussion on selected text marks it for everyone.
+  await avery.page.locator('[data-editor-root] [data-text-of]').filter({ hasText: /\w{4}/ }).first().dblclick({ position: { x: 12, y: 8 } })
+  check('selecting text offers Comment in the toolbar', await until(avery.page, () => document.querySelector('[data-overlay="nb-toolbar"] [data-tool="comment"]') !== null))
+  const quote = await avery.page.evaluate(() => document.getSelection()?.toString() ?? '')
+  await avery.page.locator('[data-overlay="nb-toolbar"] [data-tool="comment"]').click()
+  check('Comment opens a focused box quoting the selection', await until(avery.page, wanted => document.activeElement?.id === 'comment-input' && document.querySelector('#page-comments [data-thread-quote]')?.textContent === wanted, quote), quote)
+  await avery.page.keyboard.type('Is this the right word?')
+  await settle(avery.page)
+  await avery.page.keyboard.press('Enter')
+  check('the text is marked for the other person, with the quote above the discussion', await until(morgan.page, wanted =>
+    document.querySelector('[data-editor-root] .nb-comment')?.textContent === wanted && document.querySelector('[data-thread] [data-thread-quote]')?.textContent === wanted, quote), quote)
+  await morgan.page.locator('[data-editor-root] .nb-comment').first().click()
+  const inlineId = await morgan.page.evaluate(() => document.querySelector('[data-editor-root] .nb-comment')?.getAttribute('data-comment-thread'))
+  check('clicking marked text shows its discussion', await until(morgan.page, id => document.querySelector(`[data-thread="${id}"][data-active]`) !== null && document.querySelector('[data-editor-root] .nb-comment-active') !== null, inlineId))
+  await morgan.page.locator(`#resolve-${inlineId}`).click()
+  check('resolving it takes the mark away', await until(avery.page, () => document.querySelector('[data-editor-root] .nb-comment') === null))
+
   // DATABASES: a table page with typed, picked, toggled and dated cells, shared live.
   const before = avery.page.url()
   await visit(avery.page, '/p/demo-wiki')

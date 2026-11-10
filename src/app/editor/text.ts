@@ -19,7 +19,7 @@ export const plainText = (text: RichText, label: (piece: Exclude<Inline, { _tag:
   text.map(piece => (piece._tag === 'Text' ? piece.text : label(piece))).join('')
 
 export const sameMarks = (a: Marks, b: Marks): boolean =>
-  a.bold === b.bold && a.italic === b.italic && a.underline === b.underline && a.strike === b.strike && a.code === b.code && a.link === b.link && a.color === b.color
+  a.bold === b.bold && a.italic === b.italic && a.underline === b.underline && a.strike === b.strike && a.code === b.code && a.link === b.link && a.color === b.color && a.comment === b.comment
 
 export const plain = (text: string, marks: Marks = PLAIN): RichText => (text === '' ? [] : [{ _tag: 'Text', text, marks }])
 
@@ -82,12 +82,13 @@ export const marksAt = (text: RichText, offset: number): Marks => {
  *  code does not grow past its end (as in Notion). */
 export const typingMarksAt = (text: RichText, offset: number): Marks => {
   const before = marksAt(text, offset)
-  if (offset === 0) return { ...before, link: null, code: false }
+  if (offset === 0) return { ...before, link: null, code: false, comment: null }
   const after = offset < lengthOf(text) ? marksAt(text, offset + 1) : null
   return {
     ...before,
     link: after !== null && after.link === before.link ? before.link : null,
     code: before.code && after !== null && after.code,
+    comment: after !== null && after.comment === before.comment ? before.comment : null,
   }
 }
 
@@ -112,6 +113,8 @@ export const toggleMark = (text: RichText, from: number, to: number, mark: Toggl
 }
 
 export const setLink = (text: RichText, from: number, to: number, link: string | null): RichText => mapRange(text, from, to, marks => ({ ...marks, link }))
+
+export const setComment = (text: RichText, from: number, to: number, comment: string | null): RichText => mapRange(text, from, to, marks => ({ ...marks, comment }))
 
 export const setColor = (text: RichText, from: number, to: number, color: Marks['color']): RichText => mapRange(text, from, to, marks => ({ ...marks, color }))
 

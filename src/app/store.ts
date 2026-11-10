@@ -6,6 +6,7 @@ import type { DatabaseChange, Layout, Value } from './database'
 import type { Comment, Member, Page, PageVersion, Section } from './domain'
 import { hashPassword, verifyPassword } from './password'
 import {
+  type CommentAnchor,
   type DemoCounts,
   type InvalidChange,
   type NewPage,
@@ -101,7 +102,7 @@ export class Workspace extends Context.Service<
     readonly deletePage: (pageId: string, actorId: string) => Effect.Effect<number, InvalidChange>
     readonly setFavorite: (pageId: string, isFavorite: boolean, actorId: string) => Effect.Effect<void, InvalidChange>
     readonly setExpanded: (pageId: string, isExpanded: boolean, actorId: string) => Effect.Effect<void>
-    readonly addComment: (target: Readonly<{ pageId: string; threadId: string | null }>, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
+    readonly addComment: (target: Readonly<{ pageId: string; threadId: string | null; anchor?: CommentAnchor | null }>, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
     readonly editComment: (commentId: string, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
     readonly deleteComment: (commentId: string, actorId: string) => Effect.Effect<number, InvalidChange>
     readonly restoreVersion: (versionId: string, actorId: string) => Effect.Effect<Page, InvalidChange>

@@ -174,8 +174,8 @@ export const demoData = (now: number): WorkspaceData => ({
   favorites: [{ memberId: 'avery', pageId: DEMO_HOME, position: 1 }],
   expanded: [{ memberId: 'avery', pageId: 'demo-wiki' }],
   comments: [
-    { id: 'demo-comment-1', pageId: DEMO_HOME, threadId: 'demo-comment-1', authorId: 'morgan', text: 'Could we add a section on keyboard shortcuts?', createdAt: now - 3 * 3_600_000, editedAt: null, resolvedAt: null, resolvedBy: null, isDemo: true },
-    { id: 'demo-comment-2', pageId: DEMO_HOME, threadId: 'demo-comment-1', authorId: 'riley', text: 'Good idea. Type / in any block to see most of them.', createdAt: now - 2 * 3_600_000, editedAt: null, resolvedAt: null, resolvedBy: null, isDemo: true },
+    { id: 'demo-comment-1', pageId: DEMO_HOME, threadId: 'demo-comment-1', authorId: 'morgan', text: 'Could we add a section on keyboard shortcuts?', createdAt: now - 3 * 3_600_000, editedAt: null, resolvedAt: null, resolvedBy: null, quote: null, isDemo: true },
+    { id: 'demo-comment-2', pageId: DEMO_HOME, threadId: 'demo-comment-1', authorId: 'riley', text: 'Good idea. Type / in any block to see most of them.', createdAt: now - 2 * 3_600_000, editedAt: null, resolvedAt: null, resolvedBy: null, quote: null, isDemo: true },
   ],
   versions: [],
   passwords: {},

@@ -8,7 +8,7 @@ import * as Render from 'foldkit/render'
 import * as B from './blocks'
 import { link } from '../../ui/link'
 import { blockAt, readSelection, writeSelection } from './dom.client'
-import { EditorEvent, EditorProps, MemberRef, PageRef } from './island'
+import { EditorEvent, EditorProps, MAX_QUOTE, MemberRef, PageRef } from './island'
 import { keyResult } from './keys'
 import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, iconChoices, inlineMenuItems, languageChoices, linkChoices, linkUnderCaret, slashItems } from './menus'
 import { ANCHOR, colorClass, context, renderDocument } from './render'
@@ -49,6 +49,8 @@ export const Model = S.Struct({
   overlay: Overlay,
   isComposing: S.Boolean,
   epoch: S.Number,
+  threads: S.Array(S.String),
+  activeThread: S.NullOr(S.String),
 })
 export type Model = typeof Model.Type
 
@@ -65,6 +67,8 @@ export const Message = defineMessageUnion({
   HoveredMenuItem: { index: S.Number },
   ChoseMenuItem: { index: S.Number },
   OpenedLink: {},
+  StartedComment: {},
+  ClickedCommentMark: { threadId: S.String },
   ToggledCurrent: {},
   OpenedBlockMenu: { blockId: S.NullOr(S.String) },
   ClickedControl: { action: S.String, blockId: S.String },
@@ -83,7 +87,7 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-const MOUNT_TAGS = ['Acted', 'PressedMenuKey', 'TypedMenuChar', 'HoveredMenuItem', 'ChoseMenuItem', 'OpenedLink', 'ToggledCurrent', 'OpenedBlockMenu', 'ClickedControl', 'ClickedTool', 'StartedComposition', 'Composed', 'PastedBlocks', 'Dropped', 'ResizedImage', 'Blurred'] as const
+const MOUNT_TAGS = ['Acted', 'PressedMenuKey', 'TypedMenuChar', 'HoveredMenuItem', 'ChoseMenuItem', 'OpenedLink', 'StartedComment', 'ClickedCommentMark', 'ToggledCurrent', 'OpenedBlockMenu', 'ClickedControl', 'ClickedTool', 'StartedComposition', 'Composed', 'PastedBlocks', 'Dropped', 'ResizedImage', 'Blurred'] as const
 type MountMessage = Extract<Message, { _tag: (typeof MOUNT_TAGS)[number] }>
 
 // PORT
@@ -349,7 +353,7 @@ const TOOL_MARKS: Readonly<Record<string, ToggleMark>> = { bold: 'bold', italic:
 export const init = (props: EditorProps): Update.Return<Model, Message> => {
   const editor = initial(props.content, `${props.pageId.slice(-6)}-${Math.floor(props.revision % 1e6).toString(36)}-`)
   const model: Model = {
-      pageId: props.pageId, revision: props.revision, isEditable: props.isEditable, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today,
+      pageId: props.pageId, revision: props.revision, isEditable: props.isEditable, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today, threads: props.threads, activeThread: props.activeThread,
       editor, saved: editor.doc, saveSeq: 0, overlay: { _tag: 'Closed' }, isComposing: false, epoch: 0,
   }
   return { model, commands: [Sync({ model, isAfterInput: false })] }
@@ -357,13 +361,33 @@ export const init = (props: EditorProps): Update.Return<Model, Message> => {
 
 // UPDATE
 
+/** Comment on the selected text of one block: the page opens the comment box.
+ *  Pending edits go first, so the store sees the text that was selected. */
+const startComment = (model: Model): Update.Return<Model, Message> => {
+  const { selection, doc } = model.editor
+  if (!model.isEditable || selection._tag !== 'TextSelection' || isCollapsed(selection)) return { model }
+  const [start, end] = ordered(doc, selection)
+  const target = B.find(doc, start.blockId)
+  if (start.blockId !== end.blockId || target === null) return { model }
+  const quote = T.caretText(T.slice(target.text, start.offset, end.offset))
+  if (quote.trim() === '' || quote.length > MAX_QUOTE) return { model }
+  const isPending = doc !== model.saved
+  return {
+    model: isPending ? { ...model, saved: doc } : model,
+    commands: [
+      ...(isPending ? [Emit({ event: { _tag: 'ChangedContent', pageId: model.pageId, content: doc } })] : []),
+      Emit({ event: { _tag: 'StartedComment', pageId: model.pageId, blockId: start.blockId, from: start.offset, to: end.offset, quote } }),
+    ],
+  }
+}
+
 const step = (model: Model, message: Message): Update.Return<Model, Message> =>
   M.value(message).pipe(
     M.withReturnType<Update.Return<Model, Message>>(),
     M.tagsExhaustive({
       ReceivedProps: ({ props }) => {
         if (props.pageId !== model.pageId) return { model }
-        const base: Model = { ...model, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today, isEditable: props.isEditable, revision: Math.max(model.revision, props.revision) }
+        const base: Model = { ...model, pages: props.pages, members: props.members, crumbs: props.crumbs, today: props.today, threads: props.threads, activeThread: props.activeThread, isEditable: props.isEditable, revision: Math.max(model.revision, props.revision) }
         const hasPending = model.editor.doc !== model.saved
         if (props.revision <= model.revision || hasPending || JSON.stringify(props.content) === JSON.stringify(model.editor.doc)) return { model: base }
         const editor = apply(model.editor, { _tag: 'ReplaceDocument', doc: props.content })
@@ -446,10 +470,14 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
           if (tool === 'link-edit') return commit(model, apply(model.editor, { _tag: 'Select', selection: range }), { _tag: 'Prompt', field: 'link', blockId: spot.blockId, value: spot.url, active: 0 })
           return actAll(model, [{ _tag: 'Select', selection: range }, { _tag: 'SetLink', url: null }, { _tag: 'Select', selection: model.editor.selection }])
         }
+        if (tool === 'comment') return startComment(model)
         if (tool === 'color') return { model: { ...model, overlay: { _tag: 'ColorMenu', active: 0 } } }
         if (tool === 'turn') return step(model, Message.OpenedBlockMenu({ blockId: null }))
         return { model }
       },
+      StartedComment: () => startComment(model),
+      ClickedCommentMark: ({ threadId }) =>
+        model.threads.includes(threadId) ? { model, commands: [Emit({ event: { _tag: 'OpenedComment', pageId: model.pageId, threadId } })] } : { model },
       StartedComposition: () => ({ model: { ...model, isComposing: true } }),
       Composed: ({ text }) => {
         const next = { ...model, isComposing: false, epoch: model.epoch + 1 }
@@ -543,7 +571,7 @@ const plainOf = (blocks: ReadonlyArray<Block>): string =>
 
 const EditPage = Mount.defineStream('EditPage', {
   args: { pageId: S.String },
-  messages: [Message.Acted, Message.PressedMenuKey, Message.TypedMenuChar, Message.HoveredMenuItem, Message.ChoseMenuItem, Message.OpenedLink, Message.ToggledCurrent, Message.OpenedBlockMenu, Message.ClickedControl, Message.ClickedTool, Message.StartedComposition, Message.Composed, Message.PastedBlocks, Message.Dropped, Message.ResizedImage, Message.Blurred],
+  messages: [Message.Acted, Message.PressedMenuKey, Message.TypedMenuChar, Message.HoveredMenuItem, Message.ChoseMenuItem, Message.OpenedLink, Message.StartedComment, Message.ClickedCommentMark, Message.ToggledCurrent, Message.OpenedBlockMenu, Message.ClickedControl, Message.ClickedTool, Message.StartedComposition, Message.Composed, Message.PastedBlocks, Message.Dropped, Message.ResizedImage, Message.Blurred],
   execute: ({ element, pageId }) =>
     Stream.callback<MountMessage>(queue =>
       Effect.gen(function* () {
@@ -629,6 +657,7 @@ const EditPage = Mount.defineStream('EditPage', {
               case 'OpenLink': return offer(Message.OpenedLink())
               case 'ToggleCurrent': return offer(Message.ToggledCurrent())
               case 'OpenBlockMenu': return offer(Message.OpenedBlockMenu({ blockId: null }))
+              case 'Comment': return offer(Message.StartedComment())
             }
           }],
           [document, 'selectionchange', () => {
@@ -694,6 +723,8 @@ const EditPage = Mount.defineStream('EditPage', {
             // The handle opens its menu on pointerup (unless it dragged); its click must not close it.
             if (action === 'handle') return
             if (control !== null) return offer(Message.ClickedControl({ action, blockId: control.getAttribute('data-block') ?? '' }))
+            const thread = target.closest('[data-comment-thread]')?.getAttribute('data-comment-thread')
+            if (thread !== undefined && thread !== null) offer(Message.ClickedCommentMark({ threadId: thread }))
             const link = target.closest('a[data-link]')
             if (link !== null && (mouse.ctrlKey || mouse.metaKey)) window.open(link.getAttribute('href') ?? '', '_blank', 'noopener')
             if (target.closest('[data-overlay]') === null && state()?.overlay._tag !== 'Closed') offer(Message.PressedMenuKey({ key: 'escape' }))
@@ -856,7 +887,7 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
     const same = start.blockId === end.blockId
     const has = (mark: ToggleMark) => same && T.hasMark(text, start.offset, end.offset, mark)
     return [panel(h, 'nb-toolbar', [
-      tool('turn', 'Turn into'), tool('link', 'Link', same && T.linkAt(text, start.offset, end.offset) !== null),
+      tool('turn', 'Turn into'), tool('link', 'Link', same && T.linkAt(text, start.offset, end.offset) !== null), ...(same && B.find(editor.doc, start.blockId) !== null ? [tool('comment', 'Comment')] : []),
       tool('bold', 'B', has('bold')), tool('italic', 'i', has('italic')), tool('underline', 'U', has('underline')), tool('strike', 'S', has('strike')), tool('code', '</>', has('code')), tool('color', 'A'),
     ], 'top')]
   }

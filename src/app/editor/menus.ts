@@ -91,7 +91,7 @@ export type InlineSources = Readonly<{ members: ReadonlyArray<MemberRef>; pages:
 
 export type InlineItem = Readonly<{ group: string; label: string; hint: string; piece: Inline }>
 
-const PLAIN_MARKS = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null } as const
+const PLAIN_MARKS = { bold: false, italic: false, underline: false, strike: false, code: false, color: 'default', link: null, comment: null } as const
 
 const DATE_WORDS: ReadonlyArray<readonly [label: string, days: number]> = [['Today', 0], ['Tomorrow', 1], ['Yesterday', -1]]
 
