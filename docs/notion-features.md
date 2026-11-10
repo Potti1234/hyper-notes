@@ -137,7 +137,7 @@ emoji.
 | Presence avatars in the topbar | ✅ avatars of the others on the page, live; name on hover |
 | Comments: inline (on a text range, shown with underline highlight and a margin bubble) and page-level; resolve | ✅ page-level; inline ⏳ |
 | Inbox: mentions of me and replies | ⏳ |
-| Search: `Ctrl+K` modal, recent pages when empty, results by title and content with highlighted match, ↑/↓/Enter, filters "Only titles" | ✅; "Only titles" ⏳ |
+| Search: `Ctrl+K` modal, recent pages when empty, results by title and content with highlighted match, ↑/↓/Enter, filters "Only titles" | ✅ including "Only titles" |
 | Sharing/publishing to web, guests, permissions | ✗ (single workspace, members edit; locked pages are read-only) |
 | AI | ✗ |
 | Mobile toolbar | ✗ |

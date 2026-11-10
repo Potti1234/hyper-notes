@@ -79,9 +79,9 @@ describe('search', () => {
     const typed = PagePage.update(opened.model, PagePage.Message.ChangedPickerQuery({ query: 'plain' }))
     assert.deepStrictEqual(tags(typed), ['SearchPages'])
     const hits = searchPages(stateOf(), 'avery', 'plain')
-    const stale = PagePage.update(typed.model, PagePage.Message.GotSearch({ query: 'pla', hits: searchPages(stateOf(), 'avery', 'pla') }))
+    const stale = PagePage.update(typed.model, PagePage.Message.GotSearch({ query: 'pla', isTitlesOnly: false, hits: searchPages(stateOf(), 'avery', 'pla') }))
     assert.isNull(stale.model.search)
-    const got = PagePage.update(typed.model, PagePage.Message.GotSearch({ query: 'plain', hits }))
+    const got = PagePage.update(typed.model, PagePage.Message.GotSearch({ query: 'plain', isTitlesOnly: false, hits }))
     const items = PagePage.pickerItems(got.model)
     const style = items.find(item => item.value === 'demo-style')!
     assert.deepStrictEqual(style.detail, { before: 'Short sentences. ', match: 'Plain', after: ' words.' })
@@ -93,6 +93,29 @@ describe('search', () => {
   it('results arriving after the palette closed are dropped', () => {
     const opened = PagePage.update(model(), PagePage.Message.ClickedSearch()).model
     const closed = PagePage.update(opened, PagePage.Message.ClosedPicker()).model
-    assert.isNull(PagePage.update(closed, PagePage.Message.GotSearch({ query: '', hits: [] })).model.search)
+    assert.isNull(PagePage.update(closed, PagePage.Message.GotSearch({ query: '', isTitlesOnly: false, hits: [] })).model.search)
+  })
+})
+
+describe('search: Only titles', () => {
+  it('finds pages by title alone and leaves out text-only matches', () => {
+    assert.deepStrictEqual(searchPages(stateOf(), 'avery', 'plain words', true), [])
+    const hits = searchPages(stateOf(), 'avery', 'wiki', true)
+    assert.isAbove(hits.length, 0)
+    assert.isTrue(hits.every(hit => hit.isTitleMatch && hit.snippet === null))
+  })
+
+  it('the filter reruns the search and drops results for the other setting', () => {
+    const slice = PagePage.sliceOf(stateOf(), DEMO_HOME, 'avery', NOW)
+    const start = PagePage.init({ ...slice, me: avery, view: 'page', pageId: DEMO_HOME }).model
+    const typed = PagePage.update(PagePage.update(start, PagePage.Message.ClickedSearch()).model, PagePage.Message.ChangedPickerQuery({ query: 'plain' })).model
+    const on = PagePage.update(typed, PagePage.Message.ToggledSearchTitlesOnly())
+    assert.isTrue(on.model.isSearchTitlesOnly)
+    assert.deepStrictEqual((on.commands ?? []).map(command => command.name), ['SearchPages'])
+    const late = PagePage.update(on.model, PagePage.Message.GotSearch({ query: 'plain', isTitlesOnly: false, hits: searchPages(stateOf(), 'avery', 'plain') }))
+    assert.isNull(late.model.search)
+    const got = PagePage.update(on.model, PagePage.Message.GotSearch({ query: 'plain', isTitlesOnly: true, hits: [] }))
+    assert.deepStrictEqual(got.model.search, { query: 'plain', hits: [] })
+    assert.deepStrictEqual(PagePage.update(start, PagePage.Message.ToggledSearchTitlesOnly()).model, start)
   })
 })

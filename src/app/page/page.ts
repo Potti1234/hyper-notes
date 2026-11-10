@@ -100,6 +100,8 @@ export const Model = S.Struct({
   history: S.NullOr(History),
   /** Search results for `query`; shown only while the search box still says it. */
   search: S.NullOr(S.Struct({ query: S.String, hits: S.Array(SearchHit) })),
+  /** The search palette's "Only titles" filter. */
+  isSearchTitlesOnly: S.Boolean,
   /** Filters the Trash list by title and location. */
   trashQuery: S.String,
   /** The page "Delete from Trash" asks about before deleting it for good. */
@@ -191,7 +193,8 @@ export const Message = defineMessageUnion({
   ClickedRestoreVersion: { versionId: S.String },
   GotVersion: { preview: VersionPreview },
   MissedVersion: { versionId: S.String },
-  GotSearch: { query: S.String, hits: S.Array(SearchHit) },
+  GotSearch: { query: S.String, isTitlesOnly: S.Boolean, hits: S.Array(SearchHit) },
+  ToggledSearchTitlesOnly: {},
   GotPage: {
     me: Member,
     page: S.NullOr(Page),
@@ -284,6 +287,7 @@ export const ClientMessage = S.Union([
   Message.ClickedCover,
   Message.ClickedRemoveCover,
   Message.CopiedLink,
+  Message.ToggledSearchTitlesOnly,
   Message.ClickedReposition,
   Message.MovedCover,
   Message.ClickedSaveCover,
@@ -484,10 +488,10 @@ export const LoadVersion = Command.define('LoadVersion', {
 })
 
 export const SearchPages = Command.define('SearchPages', {
-  args: { query: S.String, actorId: S.String },
+  args: { query: S.String, isTitlesOnly: S.Boolean, actorId: S.String },
   messages: [Message.GotSearch],
-  execute: ({ query, actorId }) =>
-    Workspace.use(workspace => workspace.current).pipe(Effect.map(state => Message.GotSearch({ query, hits: searchPages(state, actorId, query) }))),
+  execute: ({ query, isTitlesOnly, actorId }) =>
+    Workspace.use(workspace => workspace.current).pipe(Effect.map(state => Message.GotSearch({ query, isTitlesOnly, hits: searchPages(state, actorId, query, isTitlesOnly) }))),
 })
 
 export const RestoreVersion = Command.define('RestoreVersion', {
@@ -651,7 +655,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -1667,13 +1671,18 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
       ClickedAdd: ({ parentId, section }) =>
         parentId !== null && !isKnown(model, parentId) ? { model } : { model, commands: [CreatePage({ parentId, section, actorId: model.me.id })] },
       ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: withPicker(model, openPicker('page', pageId, anchor)) } : { model }),
-      ClickedSearch: () => ({ model: { ...withPicker(model, openPicker('search', '', null)), search: null }, commands: [SearchPages({ query: '', actorId: model.me.id })] }),
+      ClickedSearch: () => ({ model: { ...withPicker(model, openPicker('search', '', null)), search: null, isSearchTitlesOnly: false }, commands: [SearchPages({ query: '', isTitlesOnly: false, actorId: model.me.id })] }),
+      ToggledSearchTitlesOnly: () => {
+        if (model.picker?.field !== 'search') return { model }
+        const isTitlesOnly = !model.isSearchTitlesOnly
+        return { model: { ...model, isSearchTitlesOnly: isTitlesOnly, search: null, picker: { ...model.picker, active: 0 } }, commands: [SearchPages({ query: model.picker.query, isTitlesOnly, actorId: model.me.id })] }
+      },
       ChangedPickerQuery: ({ query }) => {
         if (model.picker === null) return { model }
         const next = { ...model, picker: { ...model.picker, query: query.slice(0, 200), active: 0 } }
-        return model.picker.field === 'search' ? { model: next, commands: [SearchPages({ query: next.picker.query, actorId: model.me.id })] } : { model: next }
+        return model.picker.field === 'search' ? { model: next, commands: [SearchPages({ query: next.picker.query, isTitlesOnly: model.isSearchTitlesOnly, actorId: model.me.id })] } : { model: next }
       },
-      GotSearch: ({ query, hits }) => (model.picker?.field === 'search' && model.picker.query === query ? { model: { ...model, search: { query, hits } } } : { model }),
+      GotSearch: ({ query, isTitlesOnly, hits }) => (model.picker?.field === 'search' && model.picker.query === query && model.isSearchTitlesOnly === isTitlesOnly ? { model: { ...model, search: { query, hits } } } : { model }),
       PressedPickerKey: ({ key }) => {
         if (model.picker === null) return { model }
         const action = keyAction(model.picker, pickerItems(model), key)
@@ -2269,7 +2278,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         onKey: key => Message.PressedPickerKey({ key }),
         onChoose: value => Message.ChosePicker({ value }),
         onClose: Message.ClosedPicker(),
-        ...(model.picker.field === 'search' ? { title: 'Search' } : {}),
+        ...(model.picker.field === 'search' ? { title: 'Search', filters: [{ id: 'search-titles-only', label: 'Only titles', isPressed: model.isSearchTitlesOnly, onToggle: Message.ToggledSearchTitlesOnly() }] } : {}),
         ...(model.picker.field === 'options' ? { footer: optionsFooter(model) } : {}),
       }, h)]),
       ...(model.notice === null ? [] : [box({ class: 'fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-md bg-foreground px-3 py-2 text-[13px] text-background', attributes: [h.Id('notice'), h.Role('status')], children: [model.notice, button({ variant: 'ghost', size: 'icon-xs', ariaLabel: 'Dismiss', onClick: Message.ClickedDismissNotice(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h)] }, h)]),

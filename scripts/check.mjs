@@ -313,6 +313,11 @@ try {
     const items = [...document.querySelectorAll('#picker [role="listbox"] [id^="picker-item-"]')]
     return items.length === 1 && items[0].querySelector('[data-picker-match]')?.textContent === 'Plain' && items[0].querySelector('[data-picker-hint]')?.textContent === 'Engineering Wiki'
   }))
+  await avery.page.locator('#search-titles-only').click()
+  check('"Only titles" leaves out pages that match only in their text', await until(avery.page, () => document.querySelector('#search-titles-only')?.getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#picker [id^="picker-item-"]').length === 0))
+  await avery.page.locator('#search-titles-only').click()
+  check('and turning it off brings them back', await until(avery.page, () => document.querySelector('#search-titles-only')?.getAttribute('aria-pressed') === 'false' && document.querySelectorAll('#picker [id^="picker-item-"] [data-picker-match]').length === 1))
+  await avery.page.locator('#picker-input').click()
   await avery.page.keyboard.press('Enter')
   check('Enter opens the page it found', await avery.page.waitForURL('**/p/demo-style', { timeout: TIMEOUT }).then(() => true, () => false))
 

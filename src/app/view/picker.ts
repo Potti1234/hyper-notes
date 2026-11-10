@@ -3,6 +3,7 @@ import type { Html, HtmlBuilder } from 'foldkit/html'
 
 import { input } from '@/ui/input'
 import { kbd } from '@/ui/kbd'
+import { toggle } from '@/ui/toggle'
 import { cn } from '@/lib/utils'
 import { anchoredStyle } from '@/lib/anchored'
 import * as Icon from '@/lib/icon'
@@ -144,6 +145,8 @@ export type PickerViewProps<Msg> = Readonly<{
   title?: string
   /** Muted lines under the list, such as the ••• menu's word count. */
   footer?: ReadonlyArray<string>
+  /** On/off filters under the input, such as search's "Only titles". */
+  filters?: ReadonlyArray<Readonly<{ id: string; label: string; isPressed: boolean; onToggle: Msg }>>
 }>
 
 export const PICKER_INPUT_ID = 'picker-input'
@@ -216,6 +219,7 @@ export const pickerView = <Msg>(props: PickerViewProps<Msg>, h: HtmlBuilder<Msg>
             h,
           ),
         ] }, h),
+      ...(props.filters === undefined || props.filters.length === 0 ? [] : [box({ class: 'flex items-center gap-1.5 border-b px-3 py-1.5', attributes: [h.Id('picker-filters')], children: props.filters.map(filter => toggle({ id: filter.id, variant: 'outline', size: 'sm', isPressed: filter.isPressed, onToggle: filter.onToggle, children: [filter.label] }, h)) }, h)]),
       box({ class: cn('min-h-0 overflow-y-auto p-1', isCentered ? 'max-h-[360px]' : 'max-h-[300px]'), attributes: [h.Role('listbox'), h.AriaLabel(placeholder[picker.field])], children: visible.length === 0 ? [box({ class: 'px-2 py-6 text-center text-[13px] text-muted-foreground', children: ['No results'] }, h)] : rows }, h),
       ...(props.footer === undefined || props.footer.length === 0 ? [] : [box({ class: 'flex flex-col gap-0.5 border-t px-3 py-2 text-[12px] text-muted-foreground', attributes: [h.Id('picker-footer')], children: props.footer.map(text => box({ children: [text] }, h)) }, h)]),
     ] }, h)

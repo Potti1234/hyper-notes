@@ -86,8 +86,9 @@ const hitOf = (state: WorkspaceState, page: Page, isTitleMatch: boolean, snippet
 })
 
 /** Pages the member can open whose title or text holds every word: title
- *  matches first, then the most recently edited. No words: recent pages. */
-export const searchPages = (state: WorkspaceState, memberId: string, query: string): ReadonlyArray<SearchHit> => {
+ *  matches first, then the most recently edited. No words: recent pages.
+ *  `isTitlesOnly` is Notion's "Only titles" filter: the text isn't searched. */
+export const searchPages = (state: WorkspaceState, memberId: string, query: string, isTitlesOnly = false): ReadonlyArray<SearchHit> => {
   const words = wordsOf(query)
   const pages = state.pages
     .filter(page => canSee(page, memberId) && !isTrashed(state.pages, page))
@@ -98,6 +99,10 @@ export const searchPages = (state: WorkspaceState, memberId: string, query: stri
   for (const page of pages) {
     const title = titleOf(page).toLowerCase()
     const isTitleMatch = words.every(word => title.includes(word))
+    if (isTitlesOnly) {
+      if (isTitleMatch) hits.push(hitOf(state, page, true, null))
+      continue
+    }
     const text = pageText(state, page.content)
     const all = `${title} ${text.toLowerCase()}`
     if (!isTitleMatch && !words.every(word => all.includes(word))) continue
