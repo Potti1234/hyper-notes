@@ -109,6 +109,7 @@ try {
     for (const [selector, label] of [
       ['#header-title', 'the Name header menu'],
       ['#header-demo-tags', 'the Tags header menu'],
+      ['#row-count', 'the Count calculation menu'],
       ['#add-property', 'the + property menu'],
       ['#add-view', 'the + view menu'],
       ['#database-filter', 'the Filter menu'],

@@ -27,7 +27,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -200,6 +200,7 @@ export const Message = defineMessageUnion({
   ClickedAddProperty: {},
   ChangedPropertyName: { name: S.String },
   SubmittedPropertyName: {},
+  ClickedCalc: { propertyId: S.String },
   ChangedFormula: { expression: S.String },
   SubmittedFormula: {},
   CancelledFormula: {},
@@ -286,6 +287,7 @@ export const ClientMessage = S.Union([
   Message.ClickedAddProperty,
   Message.SubmittedPropertyName,
   Message.SubmittedFormula,
+  Message.ClickedCalc,
   Message.CancelledFormula,
   Message.ClickedCell,
   Message.SubmittedCell,
@@ -679,6 +681,14 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     case 'rollupProperty':
     case 'rollupFn':
       return rollupItems(model, picker.field, picker.pageId)
+    case 'calculate': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      if (page === null || view === null) return []
+      const property = picker.pageId === D.TITLE ? null : D.propertyOf(page.database, picker.pageId)
+      const current = D.calcOf(view, picker.pageId)
+      return D.calcFnsFor(property).map(fn => ({ value: fn, label: D.CALC_LABEL[fn], isChecked: fn === current }))
+    }
     case 'relation': {
       const page = editableDatabase(model)
       const property = page?.database.properties.find(entry => entry.id === picker.pageId)
@@ -814,6 +824,7 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'rollupRelation':
     case 'rollupProperty':
     case 'rollupFn':
+    case 'calculate':
     case 'addProperty':
     case 'view':
     case 'addView':
@@ -1203,6 +1214,12 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         default: return { model: closed }
       }
     }
+    case 'calculate': {
+      const fn = D.CALC_FNS.find(entry => entry === value)
+      const target = picker.pageId === D.TITLE ? null : property
+      if (view === null || fn === undefined || target === undefined || !D.calcFnsFor(target).includes(fn)) return { model: closed }
+      return changeDb(model, page, { _tag: 'SetCalculation', viewId: view.id, propertyId: picker.pageId, fn })
+    }
     case 'rollupRelation':
     case 'rollupProperty':
     case 'rollupFn': {
@@ -1304,6 +1321,12 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       const page = editableDatabase(model)
       return page !== null && (message.propertyId === D.TITLE || page.database.properties.some(property => property.id === message.propertyId))
         ? { model: withPicker(model, openPicker('property', message.propertyId, headerAnchor(message.propertyId))) }
+        : { model }
+    }
+    case 'ClickedCalc': {
+      const page = editableDatabase(model)
+      return page !== null && activeView(page.database, model.db) !== null && (message.propertyId === D.TITLE || page.database.properties.some(property => property.id === message.propertyId))
+        ? { model: withPicker(model, openPicker('calculate', message.propertyId, calcAnchor(message.propertyId))) }
         : { model }
     }
     case 'ClickedAddProperty': {
@@ -1505,7 +1528,7 @@ const keepHistory = (model: Model): Model => {
 
 /** The page's update without the focus wrapper, for Story tests. */
 const DATABASE_TAGS = [
-  'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName', 'ChangedFormula', 'SubmittedFormula', 'CancelledFormula',
+  'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName', 'ClickedCalc', 'ChangedFormula', 'SubmittedFormula', 'CancelledFormula',
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
@@ -1713,6 +1736,7 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   addProperty: Message.ClickedAddProperty(),
   propertyName: name => Message.ChangedPropertyName({ name }),
   submitPropertyName: Message.SubmittedPropertyName(),
+  calc: propertyId => Message.ClickedCalc({ propertyId }),
   formula: expression => Message.ChangedFormula({ expression }),
   submitFormula: Message.SubmittedFormula(),
   cancelFormula: Message.CancelledFormula(),

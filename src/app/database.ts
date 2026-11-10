@@ -29,6 +29,24 @@ export const ROLLUP_LABEL: Readonly<Record<RollupFn, string>> = {
   showOriginal: 'Show original', countAll: 'Count all', countValues: 'Count values', countUnique: 'Count unique values', countEmpty: 'Count empty',
   percentNotEmpty: 'Percent not empty', sum: 'Sum', average: 'Average', min: 'Min', max: 'Max', range: 'Range', checked: 'Checked', percentChecked: 'Percent checked',
 }
+
+export const CALC_FNS = [
+  'none', 'countAll', 'countValues', 'countUnique', 'countEmpty', 'countNotEmpty', 'percentEmpty', 'percentNotEmpty',
+  'sum', 'average', 'median', 'min', 'max', 'range', 'checked', 'unchecked', 'percentChecked', 'percentUnchecked', 'earliest', 'latest', 'dateRange',
+] as const
+export const CalcFn = S.Literals(CALC_FNS)
+export type CalcFn = typeof CalcFn.Type
+export const CALC_LABEL: Readonly<Record<CalcFn, string>> = {
+  none: 'None', countAll: 'Count all', countValues: 'Count values', countUnique: 'Count unique values', countEmpty: 'Count empty', countNotEmpty: 'Count not empty',
+  percentEmpty: 'Percent empty', percentNotEmpty: 'Percent not empty', sum: 'Sum', average: 'Average', median: 'Median', min: 'Min', max: 'Max', range: 'Range',
+  checked: 'Checked', unchecked: 'Unchecked', percentChecked: 'Percent checked', percentUnchecked: 'Percent unchecked', earliest: 'Earliest date', latest: 'Latest date', dateRange: 'Date range',
+}
+/** How the table footer names a calculation before its result. */
+export const CALC_SHORT: Readonly<Record<CalcFn, string>> = {
+  none: '', countAll: 'Count', countValues: 'Values', countUnique: 'Unique', countEmpty: 'Empty', countNotEmpty: 'Not empty', percentEmpty: 'Empty', percentNotEmpty: 'Not empty',
+  sum: 'Sum', average: 'Average', median: 'Median', min: 'Min', max: 'Max', range: 'Range', checked: 'Checked', unchecked: 'Unchecked', percentChecked: 'Checked', percentUnchecked: 'Unchecked',
+  earliest: 'Earliest', latest: 'Latest', dateRange: 'Range',
+}
 const isPercent = (fn: RollupFn): boolean => fn === 'percentNotEmpty' || fn === 'percentChecked'
 
 export const PropertyType = S.Union([
@@ -135,6 +153,8 @@ export const DatabaseView = S.Struct({
   hiddenGroups: S.optionalKey(S.Array(S.String)),
   /** Gallery card size; medium when missing. */
   cardSize: S.optionalKey(CardSize),
+  /** Table footer calculations by property id; the title counts its rows when missing. */
+  calculations: S.optionalKey(S.Record(S.String, CalcFn)),
 })
 export type DatabaseView = typeof DatabaseView.Type
 
@@ -668,6 +688,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
   S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
   S.TaggedStruct('SetCardSize', { viewId: S.String, size: CardSize }),
+  S.TaggedStruct('SetCalculation', { viewId: S.String, propertyId: S.String, fn: CalcFn }),
   S.TaggedStruct('SetOpenIn', { viewId: S.String, openIn: OpenIn }),
   S.TaggedStruct('MoveSort', { viewId: S.String, propertyId: S.String }),
   S.TaggedStruct('SetGroupBy', { viewId: S.String, propertyId: S.NullOr(S.String) }),
@@ -840,6 +861,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
         const hidden = (view.hiddenGroups ?? []).filter(key => key !== change.key)
         return { ...view, hiddenGroups: change.isHidden ? [...hidden, change.key.slice(0, 200)] : hidden }
       })
+    case 'SetCalculation': {
+      const property = change.propertyId === TITLE ? null : propertyOf(database, change.propertyId)
+      if (change.propertyId !== TITLE && property === null) return 'That property is gone.'
+      if (!calcFnsFor(property).includes(change.fn)) return 'That calculation does not fit this property.'
+      return withView(change.viewId, view => ({ ...view, calculations: { ...view.calculations, [change.propertyId]: change.fn } }))
+    }
     case 'SetCardSize':
       return withView(change.viewId, view => ({ ...view, cardSize: change.size }))
     case 'SetOpenIn':
@@ -865,5 +892,71 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
     case 'SetHidden':
       if (!isProperty(change.propertyId) || change.propertyId === TITLE) return 'That property cannot be hidden.'
       return withView(change.viewId, view => ({ ...view, hidden: change.isHidden ? [...new Set([...view.hidden, change.propertyId])] : view.hidden.filter(propertyId => propertyId !== change.propertyId) }))
+  }
+}
+
+const COUNT_FNS: ReadonlyArray<CalcFn> = ['none', 'countAll', 'countValues', 'countUnique', 'countEmpty', 'countNotEmpty', 'percentEmpty', 'percentNotEmpty']
+
+/** The calculations a column of this type offers in the table footer. */
+export const calcFnsFor = (property: Property | null): ReadonlyArray<CalcFn> => {
+  switch (property?.type._tag) {
+    case 'Checkbox': return ['none', 'countAll', 'checked', 'unchecked', 'percentChecked', 'percentUnchecked']
+    case 'Number': case 'Id': case 'Rollup': case 'Formula': return [...COUNT_FNS, 'sum', 'average', 'median', 'min', 'max', 'range']
+    case 'Date': case 'CreatedTime': case 'LastEditedTime': return [...COUNT_FNS, 'earliest', 'latest', 'dateRange']
+    default: return COUNT_FNS
+  }
+}
+
+export const calcOf = (view: DatabaseView, propertyId: string): CalcFn => view.calculations?.[propertyId] ?? (propertyId === TITLE ? 'countAll' : 'none')
+
+const percentOf = (part: number, whole: number): string => `${whole === 0 ? 0 : Number(((part / whole) * 100).toFixed(2))}%`
+
+const median = (numbers: ReadonlyArray<number>): number => {
+  const sorted = [...numbers].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
+}
+
+/** A column's calculation over the rows shown, as the footer reads it; '' when there is nothing to show. */
+export const calculate = (database: Database, property: Property | null, rows: ReadonlyArray<Row>, people: ReadonlyArray<Person>, fn: CalcFn): string => {
+  if (fn === 'none' || !calcFnsFor(property).includes(fn)) return ''
+  const filled = rows.map(row => textOf(property, row, people)).filter(text => text !== '')
+  const valuesOf = (row: Row): Value | null => (property === null ? null : valueOf(property, row))
+  const checked = rows.filter(row => { const value = valuesOf(row); return value?._tag === 'CheckboxValue' && value.isChecked }).length
+  const numbers = rows.flatMap(row => { const value = valuesOf(row); return value?._tag === 'NumberValue' ? [value.value] : [] })
+  const format = property?.type._tag === 'Number' ? property.type.format : 'number'
+  const some = (f: (all: ReadonlyArray<number>) => number): string => {
+    const n = numbers.length === 0 ? Number.NaN : f(numbers)
+    return Number.isFinite(n) ? formatNumber(n, format) : ''
+  }
+  const dated = property === null ? [] : rows
+    .flatMap(row => { const key = sortKey(database, property.id, row, people); return key === null ? [] : [{ row, at: typeof key === 'number' ? key : Date.parse(key) }] })
+    .filter(entry => Number.isFinite(entry.at))
+    .sort((a, b) => a.at - b.at)
+  const first = dated[0]
+  const last = dated.at(-1)
+  switch (fn) {
+    case 'countAll': return String(rows.length)
+    case 'countValues': case 'countNotEmpty': return String(filled.length)
+    case 'countUnique': return String(new Set(filled).size)
+    case 'countEmpty': return String(rows.length - filled.length)
+    case 'percentEmpty': return percentOf(rows.length - filled.length, rows.length)
+    case 'percentNotEmpty': return percentOf(filled.length, rows.length)
+    case 'sum': return some(sum)
+    case 'average': return some(all => sum(all) / all.length)
+    case 'median': return some(median)
+    case 'min': return some(all => Math.min(...all))
+    case 'max': return some(all => Math.max(...all))
+    case 'range': return some(all => Math.max(...all) - Math.min(...all))
+    case 'checked': return String(checked)
+    case 'unchecked': return String(rows.length - checked)
+    case 'percentChecked': return percentOf(checked, rows.length)
+    case 'percentUnchecked': return percentOf(rows.length - checked, rows.length)
+    case 'earliest': return first === undefined ? '' : textOf(property, first.row, people)
+    case 'latest': return last === undefined ? '' : textOf(property, last.row, people)
+    case 'dateRange': {
+      const days = first === undefined || last === undefined ? 0 : Math.round((last.at - first.at) / 86_400_000)
+      return first === undefined ? '' : `${days} day${days === 1 ? '' : 's'}`
+    }
   }
 }

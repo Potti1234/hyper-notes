@@ -142,6 +142,27 @@ describe('databases: values, filters, sorts, groups', () => {
     const filtered = { ...db.views[0]!, filters: [{ id: 'f', propertyId: status.id, operator: 'is' as const, value: doing! }] }
     assert.deepStrictEqual(D.valuesForNew(db, filtered), { [status.id]: { _tag: 'OptionValue', optionId: doing! } })
   })
+
+  it('footer calculations fit the column and work out over the rows shown', () => {
+    const pointsProperty = D.propertyOf(db, points)
+    const calc = (property: D.Property | null, fn: D.CalcFn) => D.calculate(db, property, rows, people, fn)
+    assert.strictEqual(calc(null, 'countAll'), '3')
+    assert.strictEqual(calc(pointsProperty, 'sum'), '4')
+    assert.strictEqual(calc(pointsProperty, 'average'), '2')
+    assert.strictEqual(calc(pointsProperty, 'median'), '2')
+    assert.strictEqual(calc(pointsProperty, 'range'), '2')
+    assert.strictEqual(calc(pointsProperty, 'percentEmpty'), '33.33%')
+    assert.strictEqual(calc(D.propertyOf(db, tags.id), 'countNotEmpty'), '1')
+    assert.strictEqual(calc(tags, 'sum'), '', 'sum does not fit a multi-select')
+    assert.include(D.calcFnsFor(pointsProperty), 'median')
+    assert.notInclude(D.calcFnsFor(tags), 'sum')
+    const view = db.views[0]!
+    assert.strictEqual(D.calcOf(view, D.TITLE), 'countAll')
+    assert.strictEqual(D.calcOf(view, points), 'none')
+    const set = change(db, { _tag: 'SetCalculation', viewId: view.id, propertyId: points, fn: 'max' })
+    assert.strictEqual(D.calcOf(set.database.views[0]!, points), 'max')
+    assert.strictEqual(D.applyChange(db, { _tag: 'SetCalculation', viewId: view.id, propertyId: tags.id, fn: 'sum' }, id), 'That calculation does not fit this property.')
+  })
 })
 
 describe('databases: workspace operations', () => {

@@ -206,6 +206,13 @@
 .nb-db-cell.nb-db-title { width: 260px; }
 .nb-db-cell.nb-db-add { width: 40px; border-right: 0; align-items: center; justify-content: center; }
 .nb-db-head { min-height: 33px; }
+.nb-db-row.nb-db-calcs { width: max-content; min-width: 100%; border-bottom: 0; }
+.nb-db-cell.nb-db-calc { justify-content: flex-end; align-items: center; min-height: 32px; border-right: 0; }
+.nb-db-calc-hint { opacity: 0; }
+.nb-db-calc :focus-visible .nb-db-calc-hint { opacity: 1; }
+@media (hover: hover) {
+  .nb-db-calcs:hover .nb-db-calc-hint { opacity: 1; }
+}
 
 .nb-db-board { display: flex; gap: 12px; overflow-x: auto; padding: 8px 0 12px; align-items: flex-start; }
 .nb-db-column { display: flex; flex-direction: column; gap: 6px; width: 260px; flex-shrink: 0; padding: 6px; border-radius: 6px; }

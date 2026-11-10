@@ -82,6 +82,9 @@ export const DB_GRID = {
   head: 'nb-db-head',
   title: 'nb-db-title',
   add: 'nb-db-add',
+  calcs: 'nb-db-calcs',
+  calc: 'nb-db-calc',
+  calcHint: 'nb-db-calc-hint',
 } as const
 
 /** A listbox option of the pickers and menus: a roving-focus row whose

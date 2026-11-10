@@ -82,6 +82,7 @@ export const DB_SEARCH_ID = 'database-search'
 export const PEEK_SCOPE = 'peek-'
 export const cellId = (rowId: string, propertyId: string, scope = '') => `${scope}cell-${rowId}-${propertyId}`
 export const headerAnchor = (propertyId: string) => `--prop-${propertyId}`
+export const calcAnchor = (propertyId: string) => `--calc-${propertyId}`
 export const cellAnchor = (rowId: string, propertyId: string, scope = '') => `--${scope}cell-${rowId}-${propertyId}`
 export const viewAnchor = (viewId: string) => `--view-${viewId}`
 export const ADD_VIEW_ANCHOR = '--add-view'
@@ -133,6 +134,7 @@ export type DatabaseMessages<Msg> = Readonly<{
   addProperty: Msg
   propertyName: (name: string) => Msg
   submitPropertyName: Msg
+  calc: (propertyId: string) => Msg
   formula: (expression: string) => Msg
   submitFormula: Msg
   cancelFormula: Msg
@@ -359,10 +361,27 @@ const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
               box({ class: cn(DB_GRID.cell, DB_GRID.add), children: [] }, h),
             ] }, h)),
         ] }, h),
-      box({ class: 'flex items-center justify-between border-b', children: [
+      box({ class: 'flex items-center border-b', children: [
           button({ variant: 'quiet', size: 'compact', id: 'new-row', isDisabled: !props.isEditable, onClick: props.msgs.newRow, children: [Icon.plus({ class: 'size-4' }, h), 'New page'] }, h),
-          box({ as: 'span', class: 'px-2 text-[12px] text-muted-foreground', attributes: [h.Id('row-count')], children: [box({ as: 'span', class: 'uppercase', children: ['Count '] }, h), String(rows.length)] }, h),
         ] }, h),
+      box({ class: cn(DB_GRID.row, DB_GRID.calcs), attributes: [h.Id('database-calcs')], children: [
+          calcCell(view, null, rows, props, h),
+          ...shownProperties.map(property => calcCell(view, property, rows, props, h)),
+        ] }, h),
+    ] }, h)
+}
+
+/** A column's footer calculation; "Calculate" shows on hover until one is chosen. */
+const calcCell = <Msg>(view: D.DatabaseView, property: D.Property | null, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
+  const propertyId = property?.id ?? D.TITLE
+  const fn = D.calcOf(view, propertyId)
+  const isSet = fn !== 'none' && D.calcFnsFor(property).includes(fn)
+  return box({ class: cn(DB_GRID.cell, property === null && DB_GRID.title, DB_GRID.calc), attributes: [h.DataAttribute('column', propertyId)], style: { ...widthOf(props, propertyId), anchorName: calcAnchor(propertyId) }, children: [
+      ...(isSet || props.isEditable
+        ? [button({ variant: 'quiet', size: 'compact', id: property === null ? 'row-count' : `calc-${propertyId}`, isDisabled: !props.isEditable, onClick: props.msgs.calc(propertyId), children: isSet
+            ? [box({ as: 'span', class: 'text-[11px] uppercase text-muted-foreground', children: [`${D.CALC_SHORT[fn]} `] }, h), D.calculate(props.database, property, rows, props.people, fn)]
+            : [box({ as: 'span', class: cn(DB_GRID.calcHint, 'flex items-center gap-1 text-muted-foreground'), children: ['Calculate', Icon.icon('chevron-down', { class: 'size-3' }, h)] }, h)] }, h)]
+        : []),
     ] }, h)
 }
 

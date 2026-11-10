@@ -528,6 +528,17 @@ try {
   check('a formula shows its result for everyone', await until(morgan.page, ([prop, title]) => document.querySelector(`#cell-demo-task-1-${prop}`)?.textContent === `${title}!`, [formula, rowTitle]))
   check('saving closes the formula editor', await until(avery.page, () => document.querySelector('#formula-editor') === null))
 
+  // CALCULATIONS: each column's footer works out a calculation over the rows shown.
+  await avery.page.locator('#database-calcs').hover()
+  await avery.page.locator(`#calc-${formula}`).click()
+  await choose(avery.page, 'Count not empty')
+  const shownRows = await avery.page.locator('#database-table [data-row]').count()
+  check('a footer calculation shows for everyone', await until(morgan.page, ([prop, n]) => document.querySelector(`#calc-${prop}`)?.textContent === `Not empty ${n}`, [formula, shownRows]))
+  await avery.page.locator('#row-count').click()
+  check('the calculation menu offers what fits the column', await until(avery.page, () => [...document.querySelectorAll('#picker [role="option"]')].map(option => option.textContent).join('|').startsWith('None|Count all|Count values')))
+  await avery.page.keyboard.press('Escape')
+  await until(avery.page, () => document.querySelector('#picker') === null)
+
   // COLUMN WIDTHS: dragging a header's edge resizes the column for everyone.
   // Adding a property scrolls the table to its new column; bring the title back into view.
   await avery.page.evaluate(() => { document.querySelector('#database-table').scrollLeft = 0 })
