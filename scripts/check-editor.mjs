@@ -185,6 +185,8 @@ try {
   check('the code block has a Copy button', await page.locator(`${ROOT} [data-action="code-copy"]`).count() === 1)
   await page.locator(`${ROOT} [data-text-of]`).last().click()
   await page.keyboard.press('Control+Enter')
+  // Let the new block render before typing into it.
+  await settle()
   await page.keyboard.type('/callout')
   await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
   // The menu opens on "/"; wait for the typed query to filter it before Enter.
