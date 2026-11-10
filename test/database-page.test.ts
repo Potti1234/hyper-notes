@@ -121,6 +121,11 @@ describe('page: databases', () => {
     const added = send(start, PagePage.Message.ClickedAddProperty(), PagePage.Message.ChosePicker({ value: 'Number' }))
     assert.deepInclude(argsOf(added, 'ChangeDatabase'), { change: { _tag: 'AddProperty', tag: 'Number', name: '' } })
     assert.deepStrictEqual(names(send(start, PagePage.Message.ClickedAddProperty(), PagePage.Message.ChosePicker({ value: 'Spreadsheet' }))), [])
+    const left = send(start, PagePage.Message.ClickedHeader({ propertyId: 'demo-due' }), PagePage.Message.ChosePicker({ value: 'insert:left' }), PagePage.Message.ChosePicker({ value: 'Text' }))
+    assert.deepInclude(argsOf(left, 'ChangeDatabase'), { change: { _tag: 'AddProperty', tag: 'Text', name: '', beside: { propertyId: 'demo-due', isBefore: true } } })
+    const right = send(start, PagePage.Message.ClickedHeader({ propertyId: D.TITLE }), PagePage.Message.ChosePicker({ value: 'insert:right' }), PagePage.Message.ChosePicker({ value: 'Number' }))
+    assert.deepInclude(argsOf(right, 'ChangeDatabase'), { change: { _tag: 'AddProperty', tag: 'Number', name: '', beside: { propertyId: D.TITLE, isBefore: false } } })
+    assert.deepStrictEqual(names(send(start, PagePage.Message.ClickedHeader({ propertyId: D.TITLE }), PagePage.Message.ChosePicker({ value: 'insert:left' }))), [])
   })
 
   it('unknown rows and properties are ignored', () => {

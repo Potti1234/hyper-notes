@@ -669,7 +669,12 @@ export const valuesForNew = (database: Database, view: DatabaseView): Values => 
 
 /** One change to a database's properties or views, as a page posts it. */
 export const DatabaseChange = S.Union([
-  S.TaggedStruct('AddProperty', { tag: S.String, name: S.String }),
+  S.TaggedStruct('AddProperty', {
+    tag: S.String,
+    name: S.String,
+    /** Next to this property (or the title); at the end when missing. */
+    beside: S.optionalKey(S.Struct({ propertyId: S.String, isBefore: S.Boolean })),
+  }),
   S.TaggedStruct('RenameProperty', { propertyId: S.String, name: S.String }),
   S.TaggedStruct('SetPropertyType', { propertyId: S.String, tag: S.String }),
   S.TaggedStruct('SetNumberFormat', { propertyId: S.String, format: NumberFormat }),
@@ -735,8 +740,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
     case 'AddProperty': {
       if (!isPropertyTag(change.tag)) return 'That property type does not exist.'
       if (database.properties.length >= MAX_PROPERTIES) return `A database holds up to ${MAX_PROPERTIES} properties.`
+      const beside = change.beside
+      const neighbour = beside === undefined || beside.propertyId === TITLE ? -1 : database.properties.findIndex(entry => entry.id === beside.propertyId)
+      if (beside !== undefined && beside.propertyId !== TITLE && neighbour < 0) return 'That property is gone.'
+      const at = beside === undefined ? database.properties.length : neighbour + (beside.isBefore ? 0 : 1)
       const property: Property = { id: id('prop'), name: freeName(database.properties.map(entry => entry.name), nameOf(change.name, TYPE_LABEL[change.tag])), type: typeOf(change.tag, id) }
-      return { database: { ...database, properties: [...database.properties, property] }, addedId: property.id }
+      return { database: { ...database, properties: [...database.properties.slice(0, at), property, ...database.properties.slice(at)] }, addedId: property.id }
     }
     case 'RenameProperty':
       return withProperty(change.propertyId, property => ({ ...property, name: nameOf(change.name, property.name) }))

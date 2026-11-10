@@ -311,6 +311,7 @@ try {
   const dbId = pageIdOf(avery.page)
   await avery.page.locator('#page-title').fill('Projects')
   await avery.page.locator('#page-title').press('Enter')
+  check('an empty page offers every database layout', await until(avery.page, () => ['table', 'board', 'list', 'gallery', 'calendar'].every(layout => document.querySelector(`#make-${layout}`) !== null)))
   await avery.page.locator('#make-table').click()
   check('an empty page becomes a table database', await until(avery.page, () => document.querySelector('#database-table [role="table"]') !== null && document.querySelector('[data-editor-root]') === null))
   const headers = page => page.evaluate(() => [...document.querySelectorAll('#database-table [role="columnheader"] button')].map(button => button.textContent))

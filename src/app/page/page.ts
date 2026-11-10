@@ -27,7 +27,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -1024,6 +1024,12 @@ const rollupItems = (model: Model, field: 'rollupRelation' | 'rollupProperty' | 
   }
 }
 
+/** Where Insert left/right puts a new property: its picker holds `insert:<side>:<property id>`. */
+const besideOf = (pickerId: string): { readonly beside?: { readonly propertyId: string; readonly isBefore: boolean } } => {
+  const [, side, propertyId] = /^insert:(left|right):(.+)$/.exec(pickerId) ?? []
+  return side === undefined || propertyId === undefined ? {} : { beside: { propertyId, isBefore: side === 'left' } }
+}
+
 const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerItem> => {
   const page = editableDatabase(model)
   const view = page === null ? null : activeView(page.database, model.db)
@@ -1035,7 +1041,8 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     { value: 'filter', label: 'Filter', group: 'View' },
   ]
   const property = page?.database.properties.find(entry => entry.id === propertyId)
-  if (property === undefined) return sorts
+  const insertRight = { value: 'insert:right', label: 'Insert right', group: 'Property' }
+  if (property === undefined) return [...sorts, insertRight]
   return [
     { value: 'rename', label: 'Rename', group: 'Property' },
     { value: 'type', label: 'Change type', group: 'Property', hint: D.TYPE_LABEL[property.type._tag] },
@@ -1045,6 +1052,8 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     ...(property.type._tag === 'Id' ? [{ value: 'prefix', label: 'Prefix', group: 'Property', hint: property.type.prefix === '' ? 'None' : property.type.prefix }] : []),
     ...sorts,
     { value: 'hide', label: 'Hide in view', group: 'View' },
+    { value: 'insert:left', label: 'Insert left', group: 'Property' },
+    insertRight,
     { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
     { value: 'delete', label: 'Delete property', group: 'Property' },
   ]
@@ -1210,6 +1219,9 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
     case 'property': {
       if (value === 'filter' && view !== null) return changeDb(model, page, { _tag: 'AddFilter', viewId: view.id, propertyId: picker.pageId })
       if (value.startsWith('sort:') && view !== null) return changeDb(model, page, { _tag: 'SetSort', viewId: view.id, propertyId: picker.pageId, isDescending: value === 'sort:none' ? null : value === 'sort:desc' })
+      if (value === 'insert:right' || (value === 'insert:left' && property !== undefined)) {
+        return { model: withPicker(model, openPicker('addProperty', `${value}:${picker.pageId}`, picker.anchor)) }
+      }
       if (property === undefined) return { model: closed }
       switch (value) {
         case 'rename': return { model: focusOn(withDb(closed, { renaming: { propertyId: property.id, name: property.name } }), `#${PROPERTY_NAME_ID}`) }
@@ -1254,7 +1266,7 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
     case 'propertyType':
       return property !== undefined && D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'SetPropertyType', propertyId: property.id, tag: value }) : { model: closed }
     case 'addProperty':
-      return D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'AddProperty', tag: value, name: '' }) : { model: closed }
+      return D.isPropertyTag(value) ? changeDb(model, page, { _tag: 'AddProperty', tag: value, name: '', ...besideOf(picker.pageId) }) : { model: closed }
     case 'view': {
       const target = page.database.views.find(entry => entry.id === picker.pageId)
       if (target === undefined) return { model: closed }
@@ -1792,7 +1804,13 @@ const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.t
 const startView = (h: HtmlBuilder<Message>): Html =>
   box({ class: 'mt-4 flex items-center gap-2 text-[14px] text-muted-foreground', attributes: [h.Id('database-start')], children: [
       box({ as: 'span', children: ['Get started with'] }, h),
-      button({ variant: 'outline', size: 'compact', id: 'make-table', onClick: Message.ClickedMakeDatabase({ layout: 'table' }), children: [Icon.icon('table', { class: 'size-3.5' }, h), 'Table'] }, h),
+      ...D.LAYOUTS.map(layout => button({
+        variant: 'outline',
+        size: 'compact',
+        id: `make-${layout}`,
+        onClick: Message.ClickedMakeDatabase({ layout }),
+        children: [Icon.icon(LAYOUT_ICON[layout], { class: 'size-3.5' }, h), D.LAYOUT_LABEL[layout]],
+      }, h)),
     ] }, h)
 
 /** The database of a database page, or the row's properties and blocks of any other page. */

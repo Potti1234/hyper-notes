@@ -47,6 +47,11 @@ describe('databases: properties and views', () => {
     assert.strictEqual(D.propertyOf(db, number.id)!.type._tag, 'Select')
     const copy = change(db, { _tag: 'DuplicateProperty', propertyId: number.id })
     assert.strictEqual(D.propertyOf(copy.database, copy.addedId!)!.name, 'Estimate 1')
+    const left = change(db, { _tag: 'AddProperty', tag: 'Text', name: '', beside: { propertyId: number.id, isBefore: true } })
+    assert.strictEqual(left.database.properties.findIndex(property => property.id === left.addedId), db.properties.indexOf(D.propertyOf(db, number.id)!))
+    const first = change(db, { _tag: 'AddProperty', tag: 'Text', name: '', beside: { propertyId: D.TITLE, isBefore: false } })
+    assert.strictEqual(first.database.properties[0]!.id, first.addedId)
+    assert.strictEqual(D.applyChange(db, { _tag: 'AddProperty', tag: 'Text', name: '', beside: { propertyId: 'gone', isBefore: false } }, id), 'That property is gone.')
     assert.strictEqual(D.applyChange(db, { _tag: 'AddProperty', tag: 'Spreadsheet', name: '' }, id), 'That property type does not exist.')
     db = change(db, { _tag: 'AddFilter', viewId: db.views[0]!.id, propertyId: number.id }).database
     db = change(db, { _tag: 'DeleteProperty', propertyId: number.id }).database
