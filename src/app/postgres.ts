@@ -5,6 +5,7 @@ import { Array as Arr, Clock, Effect, Layer, Queue, Redacted, Schema as S, type 
 import { SqlClient, type SqlError } from 'effect/sql'
 
 import { type Comment, Cover, type Member, type Page, type PageVersion } from './domain'
+import { Database, Values } from './database'
 import { Document } from './editor/schema'
 import { type Backend, type Snapshot, Workspace, fromBackend, newId, snapshotOf } from './store'
 import type { WorkspaceData } from './workspace'
@@ -48,6 +49,8 @@ const migrate = (sql: Sql) =>
           created_by TEXT NOT NULL, created_at BIGINT NOT NULL, updated_by TEXT NOT NULL, updated_at BIGINT NOT NULL,
           trashed_at BIGINT, trashed_by TEXT, is_demo BOOLEAN NOT NULL DEFAULT FALSE
         )`
+      yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS database JSONB`
+      yield* sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS row_values JSONB NOT NULL DEFAULT '{}'`
       yield* sql`CREATE TABLE IF NOT EXISTS favorites (member_id TEXT NOT NULL, page_id TEXT NOT NULL, position DOUBLE PRECISION NOT NULL, PRIMARY KEY (member_id, page_id))`
       yield* sql`
         CREATE TABLE IF NOT EXISTS comments (
@@ -76,7 +79,7 @@ const memberRow = (member: Member, data: WorkspaceData): Row => ({
 const pageRow = (page: Page): Row => ({
   id: page.id, parent_id: page.parentId, section: page.section, owner_id: page.ownerId, position: page.position, title: page.title, icon: page.icon,
   cover: JSON.stringify(page.cover), cover_position: page.coverPosition, font: page.font, is_small_text: page.isSmallText, is_full_width: page.isFullWidth,
-  is_locked: page.isLocked, content: JSON.stringify(page.content), created_by: page.createdBy, created_at: page.createdAt, updated_by: page.updatedBy,
+  is_locked: page.isLocked, content: JSON.stringify(page.content), database: page.database === null ? null : JSON.stringify(page.database), row_values: JSON.stringify(page.values), created_by: page.createdBy, created_at: page.createdAt, updated_by: page.updatedBy,
   updated_at: page.updatedAt, trashed_at: page.trashedAt, trashed_by: page.trashedBy, is_demo: page.isDemo,
 })
 
@@ -139,6 +142,8 @@ const persist = (sql: Sql, before: WorkspaceData, after: WorkspaceData) =>
 
 const decodeCover = S.decodeUnknownSync(Cover)
 const decodeDocument = S.decodeUnknownSync(Document)
+const decodeDatabase = S.decodeUnknownSync(Database)
+const decodeValues = S.decodeUnknownSync(Values)
 const json = (value: unknown): unknown => (typeof value === 'string' ? JSON.parse(value) : value)
 
 const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
@@ -171,6 +176,8 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
         isFullWidth: row['is_full_width'] === true,
         isLocked: row['is_locked'] === true,
         content: decodeDocument(json(row['content'])),
+        database: row['database'] == null ? null : decodeDatabase(json(row['database'])),
+        values: row['row_values'] == null ? {} : decodeValues(json(row['row_values'])),
         createdBy: String(row['created_by']),
         createdAt: Number(row['created_at']),
         updatedBy: String(row['updated_by']),

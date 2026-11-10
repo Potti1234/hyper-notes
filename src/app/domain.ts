@@ -1,5 +1,6 @@
 import { Schema as S, SchemaIssue } from 'effect'
 
+import { Database, Values } from './database'
 import { Block } from './editor/schema'
 
 /* The workspace's data: members, pages (with their block documents),
@@ -80,6 +81,10 @@ export const Page = S.Struct({
   isFullWidth: S.Boolean,
   isLocked: S.Boolean,
   content: S.Array(Block),
+  /** Set when the page is a database: its rows are its child pages. */
+  database: S.NullOr(Database),
+  /** The page's values as a row of the database it is in. */
+  values: Values,
   createdBy: S.String,
   createdAt: S.Number,
   updatedBy: S.String,

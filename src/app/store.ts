@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { Clock, Context, Effect, Layer, type Scope, Semaphore, Stream, SubscriptionRef } from 'effect'
 
+import type { DatabaseChange, Layout, Value } from './database'
 import type { Comment, Member, Page, PageVersion, Section } from './domain'
 import { hashPassword, verifyPassword } from './password'
 import {
@@ -31,6 +32,10 @@ import {
   setTheme,
   trashPage,
   updatePage,
+  makeDatabase,
+  changeDatabase,
+  setValue,
+  addRow,
 } from './workspace'
 
 export { InvalidChange } from './workspace'
@@ -83,6 +88,10 @@ export class Workspace extends Context.Service<
     readonly setPreset: (memberId: string, theme: string) => Effect.Effect<void>
     readonly createPage: (input: NewPage, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly updatePage: (pageId: string, patch: PagePatch, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly makeDatabase: (pageId: string, layout: Layout, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly changeDatabase: (pageId: string, change: DatabaseChange, actorId: string) => Effect.Effect<string | null, InvalidChange>
+    readonly setValue: (rowId: string, propertyId: string, value: Value | null, actorId: string) => Effect.Effect<Page, InvalidChange>
+    readonly addRow: (databaseId: string, input: Readonly<{ title: string; values: Page['values']; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly movePage: (pageId: string, target: Readonly<{ parentId: string | null; section: Section; beforeId: string | null }>, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly duplicatePage: (pageId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly trashPage: (pageId: string, actorId: string) => Effect.Effect<Page, InvalidChange>
@@ -128,6 +137,10 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
   setPreset: (memberId, theme) => traced(backend, 'setPreset', setPreset(memberId, theme)),
   createPage: (input, actorId) => traced(backend, 'createPage', createPage(input, actorId)),
   updatePage: (pageId, patch, actorId) => traced(backend, 'updatePage', updatePage(pageId, patch, actorId)),
+  makeDatabase: (pageId, layout, actorId) => traced(backend, 'makeDatabase', makeDatabase(pageId, layout, actorId)),
+  changeDatabase: (pageId, change, actorId) => traced(backend, 'changeDatabase', changeDatabase(pageId, change, actorId)),
+  setValue: (rowId, propertyId, value, actorId) => traced(backend, 'setValue', setValue(rowId, propertyId, value, actorId)),
+  addRow: (databaseId, input, actorId) => traced(backend, 'addRow', addRow(databaseId, input, actorId)),
   movePage: (pageId, target, actorId) => traced(backend, 'movePage', movePage(pageId, target, actorId)),
   duplicatePage: (pageId, actorId) => traced(backend, 'duplicatePage', duplicatePage(pageId, actorId)),
   trashPage: (pageId, actorId) => traced(backend, 'trashPage', trashPage(pageId, actorId)),

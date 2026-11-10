@@ -39,8 +39,9 @@ const visibleChildren = (state: WorkspaceState, parentId: string | null, section
 
 const tree = (state: WorkspaceState, parentId: string | null, section: Section | null, memberId: string, open: ReadonlySet<string>, depth: number): ReadonlyArray<NavRow> =>
   visibleChildren(state, parentId, section, memberId).flatMap(page => {
-    const hasChildren = visibleChildren(state, page.id, null, memberId).length > 0
-    const isOpen = open.has(page.id)
+    // A database's rows are its pages, but the sidebar leaves them out, as Notion does.
+    const hasChildren = page.database === null && visibleChildren(state, page.id, null, memberId).length > 0
+    const isOpen = hasChildren && open.has(page.id)
     const row: NavRow = { id: page.id, title: titleOf(page), icon: page.icon, depth, hasChildren, isOpen }
     return [row, ...(isOpen ? tree(state, page.id, null, memberId, open, depth + 1) : [])]
   })

@@ -56,6 +56,8 @@ const page = (id: string, fields: Partial<Page> & Pick<Page, 'title'>, at: numbe
   isFullWidth: false,
   isLocked: false,
   content: [],
+  database: null,
+  values: {},
   createdBy: 'avery',
   createdAt: at,
   updatedBy: 'avery',

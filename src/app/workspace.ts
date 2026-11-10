@@ -1,6 +1,7 @@
 import { Data, Effect, Schema as S } from 'effect'
 
 import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW } from './domain'
+import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf } from './database'
 import { copyWithIds } from './editor/blocks'
 import { type Block, Document } from './editor/schema'
 
@@ -82,6 +83,10 @@ const replacePages = (pages: ReadonlyArray<Page>, changed: ReadonlyArray<Page>):
   return pages.map(page => byId.get(page.id) ?? page)
 }
 
+const editablePage = (data: WorkspaceData, id: string, actorId: string): Effect.Effect<Page, InvalidChange> =>
+  Effect.flatMap(visiblePage(data, id, actorId), page =>
+    isTrashed(data.pages, page) ? invalid('This page is in the trash. Restore it to edit it.') : page.isLocked ? invalid('This page is locked.') : Effect.succeed(page))
+
 const visiblePage = (data: WorkspaceData, id: string, actorId: string): Effect.Effect<Page, InvalidChange> => {
   const page = pageById(data.pages, id)
   return page === undefined || !canSee(page, actorId) ? invalid('That page does not exist.') : Effect.succeed(page)
@@ -114,6 +119,8 @@ export type NewPage = Readonly<{
   icon?: string
   /** Put it before this sibling; at the end when null. */
   beforeId?: string | null
+  /** Values as a database row (checked by `addRow`). */
+  values?: Page['values']
 }>
 
 export const ID_PATTERN = /^[A-Za-z0-9_-]{6,64}$/
@@ -140,6 +147,8 @@ export const createPage = (input: NewPage, actorId: string): Op<Page, InvalidCha
       isFullWidth: false,
       isLocked: false,
       content: [],
+      database: null,
+      values: input.values ?? {},
       createdBy: actorId,
       createdAt: at,
       updatedBy: actorId,
@@ -301,6 +310,65 @@ export const restorePage = (pageId: string, actorId: string): Op<Page, InvalidCh
     const parentGone = page.parentId !== null && (parent === undefined || isTrashed(data.pages, parent))
     const restored: Page = { ...page, trashedAt: null, trashedBy: null, ...(parentGone ? { parentId: null } : {}) }
     return [restored, { ...data, pages: replacePages(data.pages, [restored]) }] as const
+  })
+
+// DATABASES
+
+/** Turns an empty page into a database with one view of the layout. */
+export const makeDatabase = (pageId: string, layout: Layout, actorId: string): Op<Page, InvalidChange> => (data, { at, id }) =>
+  Effect.gen(function* () {
+    const page = yield* editablePage(data, pageId, actorId)
+    if (page.database !== null) return yield* invalid('This page is a database already.')
+    if (page.content.some(entry => entry.text.length > 0 || entry.kind._tag !== 'Paragraph')) return yield* invalid('Only an empty page can become a database.')
+    const next: Page = { ...page, database: newDatabase(layout, id), content: [], updatedBy: actorId, updatedAt: at }
+    return [next, { ...data, pages: replacePages(data.pages, [next]) }] as const
+  })
+
+/** A change to a database's properties or views; returns what it added. */
+export const changeDatabase = (pageId: string, change: DatabaseChange, actorId: string): Op<string | null, InvalidChange> => (data, { at, id }) =>
+  Effect.gen(function* () {
+    const page = yield* editablePage(data, pageId, actorId)
+    if (page.database === null) return yield* invalid('This page is not a database.')
+    const changed = applyChange(page.database, change, id)
+    if (typeof changed === 'string') return yield* invalid(changed)
+    if (changed.database === page.database) return [changed.addedId, data] as const
+    const next: Page = { ...page, database: changed.database, updatedBy: actorId, updatedAt: at }
+    return [changed.addedId, { ...data, pages: replacePages(data.pages, [next]) }] as const
+  })
+
+const databaseOf = (data: WorkspaceData, row: Page) => {
+  const parent = row.parentId === null ? undefined : pageById(data.pages, row.parentId)
+  return parent?.database == null ? null : parent.database
+}
+
+/** Sets (or, with null, clears) one value of a database row. */
+export const setValue = (rowId: string, propertyId: string, value: Value | null, actorId: string): Op<Page, InvalidChange> => (data, { at }) =>
+  Effect.gen(function* () {
+    const row = yield* editablePage(data, rowId, actorId)
+    const database = databaseOf(data, row)
+    const property = database === null ? null : propertyOf(database, propertyId)
+    if (property === null) return yield* invalid('That property is gone.')
+    const checked = value === null ? null : checkValue(property, value, data.members)
+    if (typeof checked === 'string') return yield* invalid(checked)
+    const { [propertyId]: _old, ...rest } = row.values
+    const isEmpty = checked === null || (checked._tag === 'TextValue' && checked.text === '') || (checked._tag === 'OptionsValue' && checked.optionIds.length === 0) || (checked._tag === 'PeopleValue' && checked.memberIds.length === 0)
+    const next: Page = { ...row, values: isEmpty ? rest : { ...rest, [propertyId]: checked }, updatedBy: actorId, updatedAt: at }
+    return [next, { ...data, pages: replacePages(data.pages, [next]) }] as const
+  })
+
+/** A new row (page) in a database, with the values checked against it. */
+export const addRow = (databaseId: string, input: Readonly<{ title: string; values: Page['values']; beforeId: string | null }>, actorId: string): Op<Page, InvalidChange> => (data, context) =>
+  Effect.gen(function* () {
+    const parent = yield* editablePage(data, databaseId, actorId)
+    if (parent.database === null) return yield* invalid('This page is not a database.')
+    const values: Record<string, Value> = {}
+    for (const [propertyId, value] of Object.entries(input.values)) {
+      const property = propertyId === TITLE ? null : propertyOf(parent.database, propertyId)
+      if (property === null) continue
+      const checked = checkValue(property, value, data.members)
+      if (typeof checked !== 'string') values[propertyId] = checked
+    }
+    return yield* createPage({ parentId: parent.id, section: parent.section, title: input.title, beforeId: input.beforeId, values }, actorId)(data, context)
   })
 
 /** Deletes a trashed page and everything inside it for good. */
