@@ -16,7 +16,7 @@ const url = process.env['TEST_DATABASE_URL']
 
 const reset = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
-  yield* sql`DROP TABLE IF EXISTS expanded, favorites, pages, members, workspace_meta CASCADE`
+  yield* sql`DROP TABLE IF EXISTS comments, expanded, favorites, pages, members, workspace_meta CASCADE`
 }).pipe(Effect.provide(Postgres.clientLayerFor(url ?? '')))
 
 const store = Effect.map(Layer.build(Postgres.layer.pipe(Layer.provide(Postgres.clientLayerFor(url ?? '')))), context => Context.get(context, Workspace))
@@ -40,7 +40,9 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       yield* one.setFavorite(child.id, true, 'morgan')
       yield* one.setExpanded(DEMO_HOME, true, 'morgan')
       yield* one.setTheme('avery', true)
-      const after = yield* two.changes.pipe(Stream.filter(state => state.pages.some(page => page.id === child.id && page.font === 'serif') && state.expanded.length > 0 && state.members.some(member => member.id === 'avery' && member.isDark)), Stream.runHead, Effect.timeout('5 seconds'))
+      const thread = yield* one.addComment({ pageId: child.id, threadId: null }, 'Stored comment', 'avery')
+      yield* one.resolveThread(thread.id, true, 'morgan')
+      const after = yield* two.changes.pipe(Stream.filter(state => state.pages.some(page => page.id === child.id && page.font === 'serif') && state.expanded.length > 0 && state.comments.some(comment => comment.pageId === child.id && comment.resolvedAt !== null) && state.members.some(member => member.id === 'avery' && member.isDark)), Stream.runHead, Effect.timeout('5 seconds'))
       const state = after._tag === 'Some' ? after.value : yield* two.current
       const stored = state.pages.find(page => page.id === child.id)!
       assert.strictEqual(stored.title, 'From one')
@@ -48,6 +50,7 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       assert.deepStrictEqual(stored.cover, { _tag: 'GalleryCover', name: 'gradient-1' })
       assert.isTrue(state.favorites.some(row => row.memberId === 'morgan' && row.pageId === child.id))
       assert.isTrue(state.members.find(member => member.id === 'avery')?.isDark)
+      assert.deepStrictEqual(state.comments.filter(comment => comment.pageId === child.id).map(comment => [comment.text, comment.resolvedBy]), [['Stored comment', 'morgan']])
 
       yield* two.trashPage(child.id, 'morgan')
       yield* two.deletePage(child.id, 'morgan')
@@ -56,6 +59,7 @@ describe.skipIf(url === undefined)('workspace in Postgres', () => {
       const reloaded = yield* fresh.current
       assert.isFalse(reloaded.pages.some(page => page.id === child.id))
       assert.isFalse(reloaded.favorites.some(row => row.pageId === child.id))
+      assert.isFalse(reloaded.comments.some(comment => comment.pageId === child.id))
     })))
 
   it.live('clears demo content and keeps real pages', () =>

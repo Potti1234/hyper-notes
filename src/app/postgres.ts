@@ -4,7 +4,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Array as Arr, Clock, Effect, Layer, Queue, Redacted, Schema as S, type Scope, Semaphore, SubscriptionRef } from 'effect'
 import { SqlClient, type SqlError } from 'effect/sql'
 
-import { Cover, type Member, type Page } from './domain'
+import { type Comment, Cover, type Member, type Page } from './domain'
 import { Document } from './editor/schema'
 import { type Backend, type Snapshot, Workspace, fromBackend, newId, snapshotOf } from './store'
 import type { WorkspaceData } from './workspace'
@@ -49,6 +49,11 @@ const migrate = (sql: Sql) =>
           trashed_at BIGINT, trashed_by TEXT, is_demo BOOLEAN NOT NULL DEFAULT FALSE
         )`
       yield* sql`CREATE TABLE IF NOT EXISTS favorites (member_id TEXT NOT NULL, page_id TEXT NOT NULL, position DOUBLE PRECISION NOT NULL, PRIMARY KEY (member_id, page_id))`
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS comments (
+          seq BIGSERIAL, id TEXT PRIMARY KEY, page_id TEXT NOT NULL, thread_id TEXT NOT NULL, author_id TEXT NOT NULL, text TEXT NOT NULL,
+          created_at BIGINT NOT NULL, edited_at BIGINT, resolved_at BIGINT, resolved_by TEXT, is_demo BOOLEAN NOT NULL DEFAULT FALSE
+        )`
       yield* sql`CREATE TABLE IF NOT EXISTS expanded (member_id TEXT NOT NULL, page_id TEXT NOT NULL, PRIMARY KEY (member_id, page_id))`
     }),
   )
@@ -88,6 +93,11 @@ const PAGES: Table<Page> = { name: 'pages', keys: ['id'], items: data => data.pa
 const FAVORITES: Table<WorkspaceData['favorites'][number]> = { name: 'favorites', keys: ['member_id', 'page_id'], items: data => data.favorites, row: row => ({ member_id: row.memberId, page_id: row.pageId, position: row.position }) }
 const EXPANDED: Table<WorkspaceData['expanded'][number]> = { name: 'expanded', keys: ['member_id', 'page_id'], items: data => data.expanded, row: row => ({ member_id: row.memberId, page_id: row.pageId }) }
 
+const COMMENTS: Table<Comment> = { name: 'comments', keys: ['id'], items: data => data.comments, row: comment => ({
+  id: comment.id, page_id: comment.pageId, thread_id: comment.threadId, author_id: comment.authorId, text: comment.text, created_at: comment.createdAt,
+  edited_at: comment.editedAt, resolved_at: comment.resolvedAt, resolved_by: comment.resolvedBy, is_demo: comment.isDemo,
+}) }
+
 const CHUNK = 200
 
 const persist = (sql: Sql, before: WorkspaceData, after: WorkspaceData) =>
@@ -97,6 +107,7 @@ const persist = (sql: Sql, before: WorkspaceData, after: WorkspaceData) =>
       { table: PAGES, ...(before.pages === after.pages ? { upserts: [], removed: [] } : changes(PAGES, before, after)) },
       { table: FAVORITES, ...(before.favorites === after.favorites ? { upserts: [], removed: [] } : changes(FAVORITES, before, after)) },
       { table: EXPANDED, ...(before.expanded === after.expanded ? { upserts: [], removed: [] } : changes(EXPANDED, before, after)) },
+      { table: COMMENTS, ...(before.comments === after.comments ? { upserts: [], removed: [] } : changes(COMMENTS, before, after)) },
     ]
     for (const { table, upserts } of all) {
       const columns = Object.keys(upserts[0] ?? {}).filter(column => !table.keys.includes(column))
@@ -126,6 +137,8 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
     const pages = yield* sql<Record<string, unknown>>`SELECT * FROM pages ORDER BY seq`
     const favorites = yield* sql<Record<string, unknown>>`SELECT * FROM favorites`
     const expanded = yield* sql<Record<string, unknown>>`SELECT * FROM expanded`
+    const comments = yield* sql<Record<string, unknown>>`SELECT * FROM comments ORDER BY seq`
+    const orNull = (value: unknown): number | null => (value == null ? null : Number(value))
     const data: WorkspaceData = {
       members: members.map((row): Member => ({
         id: String(row['id']), name: String(row['name']), email: String(row['email']), color: String(row['color']),
@@ -156,6 +169,11 @@ const load = (sql: Sql): Effect.Effect<Snapshot, SqlError.SqlError> =>
       })),
       favorites: favorites.map(row => ({ memberId: String(row['member_id']), pageId: String(row['page_id']), position: Number(row['position']) })),
       expanded: expanded.map(row => ({ memberId: String(row['member_id']), pageId: String(row['page_id']) })),
+      comments: comments.map((row): Comment => ({
+        id: String(row['id']), pageId: String(row['page_id']), threadId: String(row['thread_id']), authorId: String(row['author_id']), text: String(row['text']),
+        createdAt: Number(row['created_at']), editedAt: orNull(row['edited_at']), resolvedAt: orNull(row['resolved_at']),
+        resolvedBy: row['resolved_by'] == null ? null : String(row['resolved_by']), isDemo: row['is_demo'] === true,
+      })),
       passwords: Object.fromEntries(members.filter(row => row['password_hash'] !== '').map(row => [String(row['id']), String(row['password_hash'])])),
     }
     return snapshotOf(Number(meta?.version ?? 1), data)

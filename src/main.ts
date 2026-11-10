@@ -41,7 +41,7 @@ const Routes = Layer.mergeAll(
     ...page,
     path: '/p/:id',
     paths: ['/'],
-    scripts: ['/keep-scroll.js', '/assets/islands.js'],
+    scripts: ['/keep-scroll.js', '/enter-submits.js', '/assets/islands.js'],
     prefetch: ['/p/*'],
     limits: { maxBodyBytes: 2 * 1024 * 1024 },
   }),
@@ -51,6 +51,7 @@ const Routes = Layer.mergeAll(
   HttpRouter.add('GET', '/favicon.svg', HttpServerResponse.file(publicFile('favicon.svg'), { contentType: 'image/svg+xml' })),
   HttpRouter.add('GET', '/styles.css', HttpServerResponse.file(publicFile('styles.css'), { contentType: 'text/css' })),
   HttpRouter.add('GET', '/keep-scroll.js', HttpServerResponse.file(publicFile('keep-scroll.js'), { contentType: 'text/javascript' })),
+  HttpRouter.add('GET', '/enter-submits.js', HttpServerResponse.file(publicFile('enter-submits.js'), { contentType: 'text/javascript' })),
   HttpStaticServer.layer({ root: publicFile('assets'), prefix: '/assets' }),
   HttpStaticServer.layer({ root: publicFile('fonts'), prefix: '/fonts' }),
 )

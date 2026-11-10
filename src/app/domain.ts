@@ -98,6 +98,26 @@ export type Favorite = typeof Favorite.Type
 export const Expanded = S.Struct({ memberId: S.String, pageId: S.String })
 export type Expanded = typeof Expanded.Type
 
+// COMMENTS
+
+/** A comment on a page. A discussion's first comment is its thread
+ *  (`threadId` is its own id) and says whether the discussion is resolved. */
+export const Comment = S.Struct({
+  id: S.String,
+  pageId: S.String,
+  threadId: S.String,
+  authorId: S.String,
+  text: S.String,
+  createdAt: S.Number,
+  editedAt: S.NullOr(S.Number),
+  resolvedAt: S.NullOr(S.Number),
+  resolvedBy: S.NullOr(S.String),
+  isDemo: S.Boolean,
+})
+export type Comment = typeof Comment.Type
+
+export const MAX_COMMENT = 4000
+
 export const MAX_TITLE = 300
 export const MAX_DOC_BYTES = 1_500_000
 

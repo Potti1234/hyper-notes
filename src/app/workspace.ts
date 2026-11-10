@@ -1,6 +1,6 @@
 import { Data, Effect, Schema as S } from 'effect'
 
-import { type Cover, type Expanded, type Favorite, type Font, MAX_DOC_BYTES, MAX_TITLE, type Member, type Page, type Section } from './domain'
+import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, type Member, type Page, type Section } from './domain'
 import { copyWithIds } from './editor/blocks'
 import { type Block, Document } from './editor/schema'
 
@@ -16,11 +16,12 @@ export type WorkspaceData = Readonly<{
   pages: ReadonlyArray<Page>
   favorites: ReadonlyArray<Favorite>
   expanded: ReadonlyArray<Expanded>
+  comments: ReadonlyArray<Comment>
   /** Password hashes by member id. They never leave the store. */
   passwords: Readonly<Record<string, string>>
 }>
 
-export const emptyData: WorkspaceData = { members: [], pages: [], favorites: [], expanded: [], passwords: {} }
+export const emptyData: WorkspaceData = { members: [], pages: [], favorites: [], expanded: [], comments: [], passwords: {} }
 
 export class InvalidChange extends Data.TaggedError('InvalidChange')<{ readonly reason: string }> {}
 
@@ -278,6 +279,7 @@ export const deletePage = (pageId: string, actorId: string): Op<number, InvalidC
       pages: data.pages.filter(entry => !ids.has(entry.id)),
       favorites: data.favorites.filter(row => !ids.has(row.pageId)),
       expanded: data.expanded.filter(row => !ids.has(row.pageId)),
+      comments: data.comments.filter(row => !ids.has(row.pageId)),
     }] as const
   })
 
@@ -300,6 +302,69 @@ export const setExpanded = (pageId: string, isExpanded: boolean, actorId: string
   return Effect.succeed([undefined, { ...data, expanded }] as const)
 }
 
+// COMMENTS
+
+const commentText = (text: string): Effect.Effect<string, InvalidChange> => {
+  const trimmed = text.trim()
+  return trimmed === '' ? invalid('Write something first.') : trimmed.length > MAX_COMMENT ? invalid(`Keep comments under ${MAX_COMMENT} characters.`) : Effect.succeed(trimmed)
+}
+
+/** The comment, on a page the actor sees and that is not in the trash. */
+const openComment = (data: WorkspaceData, commentId: string, actorId: string): Effect.Effect<Comment, InvalidChange> =>
+  Effect.gen(function* () {
+    const comment = data.comments.find(entry => entry.id === commentId)
+    if (comment === undefined) return yield* invalid('That comment was deleted.')
+    const page = yield* visiblePage(data, comment.pageId, actorId)
+    if (isTrashed(data.pages, page)) return yield* invalid('Restore the page to change its comments.')
+    return comment
+  })
+
+const replaceComment = (data: WorkspaceData, comment: Comment): WorkspaceData => ({ ...data, comments: data.comments.map(entry => (entry.id === comment.id ? comment : entry)) })
+
+/** A new discussion on the page (`threadId` null) or a reply in an open one. */
+export const addComment = (target: Readonly<{ pageId: string; threadId: string | null }>, text: string, actorId: string): Op<Comment, InvalidChange> => (data, { at, id }) =>
+  Effect.gen(function* () {
+    const page = yield* visiblePage(data, target.pageId, actorId)
+    if (isTrashed(data.pages, page)) return yield* invalid('Restore the page to comment on it.')
+    const body = yield* commentText(text)
+    const thread = target.threadId === null ? undefined : data.comments.find(entry => entry.id === target.threadId && entry.threadId === entry.id && entry.pageId === page.id)
+    if (target.threadId !== null && thread === undefined) return yield* invalid('That discussion was deleted.')
+    if (thread !== undefined && thread.resolvedAt !== null) return yield* invalid('Reopen the discussion to reply.')
+    const commentId = id('comment')
+    const comment: Comment = { id: commentId, pageId: page.id, threadId: thread?.id ?? commentId, authorId: actorId, text: body, createdAt: at, editedAt: null, resolvedAt: null, resolvedBy: null, isDemo: false }
+    return [comment, { ...data, comments: [...data.comments, comment] }] as const
+  })
+
+export const editComment = (commentId: string, text: string, actorId: string): Op<Comment, InvalidChange> => (data, { at }) =>
+  Effect.gen(function* () {
+    const comment = yield* openComment(data, commentId, actorId)
+    if (comment.authorId !== actorId) return yield* invalid('Only its author can edit a comment.')
+    const body = yield* commentText(text)
+    if (body === comment.text) return [comment, data] as const
+    const edited: Comment = { ...comment, text: body, editedAt: at }
+    return [edited, replaceComment(data, edited)] as const
+  })
+
+/** Deletes a comment; a discussion's first comment takes the discussion along. */
+export const deleteComment = (commentId: string, actorId: string): Op<number, InvalidChange> => data =>
+  Effect.gen(function* () {
+    const comment = yield* openComment(data, commentId, actorId)
+    if (comment.authorId !== actorId) return yield* invalid('Only its author can delete a comment.')
+    const isThread = comment.id === comment.threadId
+    const comments = data.comments.filter(entry => entry.id !== comment.id && !(isThread && entry.threadId === comment.id))
+    return [data.comments.length - comments.length, { ...data, comments }] as const
+  })
+
+/** Resolves or reopens a discussion; anyone who sees the page may. */
+export const resolveThread = (threadId: string, isResolved: boolean, actorId: string): Op<Comment, InvalidChange> => (data, { at }) =>
+  Effect.gen(function* () {
+    const thread = yield* openComment(data, threadId, actorId)
+    if (thread.threadId !== thread.id) return yield* invalid('Only a discussion can be resolved.')
+    if ((thread.resolvedAt !== null) === isResolved) return [thread, data] as const
+    const next: Comment = { ...thread, resolvedAt: isResolved ? at : null, resolvedBy: isResolved ? actorId : null }
+    return [next, replaceComment(data, next)] as const
+  })
+
 // DEMO
 
 /** Adds the demo content unless it is there (false: nothing changed). */
@@ -312,8 +377,15 @@ export const addDemo = (demo: WorkspaceData): Op<boolean> => data => {
     pages: [...data.pages, ...demo.pages],
     favorites: [...data.favorites, ...demo.favorites],
     expanded: [...data.expanded, ...demo.expanded],
+    comments: [...data.comments, ...demo.comments],
     passwords: { ...data.passwords, ...demo.passwords },
   }] as const)
+}
+
+/** Replies whose discussion is gone go with it. */
+const withoutOrphans = (comments: ReadonlyArray<Comment>): ReadonlyArray<Comment> => {
+  const threads = new Set(comments.filter(row => row.id === row.threadId).map(row => row.id))
+  return comments.filter(row => threads.has(row.threadId))
 }
 
 export type DemoCounts = Readonly<{ members: number; pages: number }>
@@ -326,6 +398,7 @@ export const clearDemo = (): Op<DemoCounts> => data => {
     pages: data.pages.filter(page => !demoPages.has(page.id)),
     favorites: data.favorites.filter(row => !demoMembers.has(row.memberId) && !demoPages.has(row.pageId)),
     expanded: data.expanded.filter(row => !demoMembers.has(row.memberId) && !demoPages.has(row.pageId)),
+    comments: withoutOrphans(data.comments.filter(row => !row.isDemo && !demoMembers.has(row.authorId) && !demoPages.has(row.pageId))),
     passwords: Object.fromEntries(Object.entries(data.passwords).filter(([memberId]) => !demoMembers.has(memberId))),
   }] as const)
 }

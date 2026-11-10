@@ -86,6 +86,7 @@ export type HeaderActions<Msg> = Readonly<{
   onAddCover: Msg
   onCover: Msg
   onRemoveCover: Msg
+  onAddComment: Msg
 }>
 
 /** The cover band, with "Change cover" and "Remove" on hover. */
@@ -102,7 +103,7 @@ export const coverView = <Msg>(page: Page, isEditable: boolean, actions: HeaderA
 }
 
 /** The big icon (a button that opens the picker) and the hover row of what is missing. */
-export const iconAndControls = <Msg>(page: Page, isEditable: boolean, actions: HeaderActions<Msg>, h: HtmlBuilder<Msg>): ReadonlyArray<Html> => {
+export const iconAndControls = <Msg>(page: Page, isEditable: boolean, canComment: boolean, actions: HeaderActions<Msg>, h: HtmlBuilder<Msg>): ReadonlyArray<Html> => {
   const hasCover = page.cover._tag !== 'NoCover'
   const icon = page.icon === ''
     ? []
@@ -115,8 +116,9 @@ export const iconAndControls = <Msg>(page: Page, isEditable: boolean, actions: H
     ...(page.icon === '' ? [button({ variant: 'ghost', size: 'compact', id: 'add-icon', onClick: actions.onAddIcon, children: [Icon.icon('smile', { class: 'size-3.5' }, h), 'Add icon'] }, h)] : []),
     ...(hasCover ? [] : [button({ variant: 'ghost', size: 'compact', id: 'add-cover', onClick: actions.onAddCover, children: [Icon.icon('image', { class: 'size-3.5' }, h), 'Add cover'] }, h)]),
   ]
+  const comment = canComment ? [button({ variant: 'ghost', size: 'compact', id: 'add-comment', onClick: actions.onAddComment, children: [Icon.icon('message-square', { class: 'size-3.5' }, h), 'Add comment'] }, h)] : []
   return [
     ...icon,
-    box({ class: 'flex h-7 gap-1 text-muted-foreground opacity-0 transition-opacity group-hover/header:opacity-100 focus-within:opacity-100', attributes: [h.Id('header-controls')], style: { anchorName: page.icon === '' ? ICON_ANCHOR : 'none' }, children: isEditable ? missing : [] }, h),
+    box({ class: 'flex h-7 gap-1 text-muted-foreground opacity-0 transition-opacity group-hover/header:opacity-100 focus-within:opacity-100', attributes: [h.Id('header-controls')], style: { anchorName: page.icon === '' ? ICON_ANCHOR : 'none' }, children: [...(isEditable ? missing : []), ...comment] }, h),
   ]
 }

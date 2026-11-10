@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { Clock, Context, Effect, Layer, type Scope, Semaphore, Stream, SubscriptionRef } from 'effect'
 
-import type { Member, Page, Section } from './domain'
+import type { Comment, Member, Page, Section } from './domain'
 import { hashPassword, verifyPassword } from './password'
 import {
   type DemoCounts,
@@ -11,13 +11,17 @@ import {
   type Op,
   type PagePatch,
   type WorkspaceData,
+  addComment,
   addDemo,
   addMember,
   clearDemo,
   createPage,
+  deleteComment,
   deletePage,
   duplicatePage,
+  editComment,
   movePage,
+  resolveThread,
   restorePage,
   setExpanded,
   setFavorite,
@@ -42,6 +46,7 @@ export type WorkspaceState = Readonly<{
   pages: WorkspaceData['pages']
   favorites: WorkspaceData['favorites']
   expanded: WorkspaceData['expanded']
+  comments: WorkspaceData['comments']
 }>
 
 /** The data at one version, and the state pages see (without passwords). */
@@ -50,7 +55,7 @@ export type Snapshot = Readonly<{ version: number; data: WorkspaceData; state: W
 export const snapshotOf = (version: number, data: WorkspaceData): Snapshot => ({
   version,
   data,
-  state: { version, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded },
+  state: { version, members: data.members, pages: data.pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments },
 })
 
 export type Backend = Readonly<{
@@ -82,6 +87,10 @@ export class Workspace extends Context.Service<
     readonly deletePage: (pageId: string, actorId: string) => Effect.Effect<number, InvalidChange>
     readonly setFavorite: (pageId: string, isFavorite: boolean, actorId: string) => Effect.Effect<void, InvalidChange>
     readonly setExpanded: (pageId: string, isExpanded: boolean, actorId: string) => Effect.Effect<void>
+    readonly addComment: (target: Readonly<{ pageId: string; threadId: string | null }>, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
+    readonly editComment: (commentId: string, text: string, actorId: string) => Effect.Effect<Comment, InvalidChange>
+    readonly deleteComment: (commentId: string, actorId: string) => Effect.Effect<number, InvalidChange>
+    readonly resolveThread: (threadId: string, isResolved: boolean, actorId: string) => Effect.Effect<Comment, InvalidChange>
     /** Adds the demo content (false: it is there already). */
     readonly seedDemo: (demo: WorkspaceData) => Effect.Effect<boolean>
     readonly clearDemo: Effect.Effect<DemoCounts>
@@ -121,6 +130,10 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
   deletePage: (pageId, actorId) => traced(backend, 'deletePage', deletePage(pageId, actorId)),
   setFavorite: (pageId, isFavorite, actorId) => traced(backend, 'setFavorite', setFavorite(pageId, isFavorite, actorId)),
   setExpanded: (pageId, isExpanded, actorId) => traced(backend, 'setExpanded', setExpanded(pageId, isExpanded, actorId)),
+  addComment: (target, text, actorId) => traced(backend, 'addComment', addComment(target, text, actorId)),
+  editComment: (commentId, text, actorId) => traced(backend, 'editComment', editComment(commentId, text, actorId)),
+  deleteComment: (commentId, actorId) => traced(backend, 'deleteComment', deleteComment(commentId, actorId)),
+  resolveThread: (threadId, isResolved, actorId) => traced(backend, 'resolveThread', resolveThread(threadId, isResolved, actorId)),
   seedDemo: demo => traced(backend, 'seedDemo', addDemo(demo)),
   clearDemo: traced(backend, 'clearDemo', clearDemo()),
 })
