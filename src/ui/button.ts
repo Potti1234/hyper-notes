@@ -46,6 +46,7 @@ export const buttonVariants = cva(
         dense:
           'h-8 gap-1 rounded-[min(var(--radius-md),10px)] px-2.5 text-[13px] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5',
         'icon-md': 'size-7 rounded-[min(var(--radius-md),10px)]',
+        'icon-page': 'size-[78px] rounded-lg',
       },
     },
     defaultVariants: {

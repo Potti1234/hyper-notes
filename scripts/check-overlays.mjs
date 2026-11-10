@@ -89,6 +89,18 @@ try {
     await measure(page, '#picker', `${at} search`)
     await closeWithEscape(page, '#picker')
 
+    // The page header: the icon picker, the cover picker and the ••• options.
+    await page.locator('#page-icon').click()
+    await measure(page, '#picker', `${at} the icon picker`)
+    await closeWithEscape(page, '#picker')
+    await page.hover('#page-cover')
+    await page.locator('#change-cover').click()
+    await measure(page, '#picker', `${at} the cover picker`)
+    await closeWithEscape(page, '#picker')
+    await page.locator('#page-options').click()
+    await measure(page, '#picker', `${at} the page options`)
+    await closeWithEscape(page, '#picker')
+
     // Editor overlays, on the first block and on one near the bottom of the window.
     const blocks = await page.evaluate(() => {
       const texts = [...document.querySelectorAll('[data-editor-root] > [data-block-id] > .nb-row > [data-text-of]')].filter(text => {

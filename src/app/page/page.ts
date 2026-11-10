@@ -8,16 +8,19 @@ import { type Program, keyBindings, region } from '@hyper-effect/core'
 import * as Island from '@hyper-effect/island'
 
 import * as Icon from '@/lib/icon'
+import { cn } from '@/lib/utils'
 import { button } from '@/ui/button'
 import { input } from '@/ui/input'
 
 import { requireMember } from '../auth'
+import { EMOJI, isEmoji, pickEmoji } from '../emoji'
 import { Member, Page, Section, formatAgo, titleOf } from '../domain'
 import { EditorEvent, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import { Workspace, type WorkspaceState } from '../store'
 import { box, pageRoot } from '../view/design'
+import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { pageIcon } from '../view/icons'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
@@ -85,6 +88,14 @@ export const Message = defineMessageUnion({
   /** The editor island's content, a new sub-page, a page to open. */
   GotEditorEvent: { event: EditorEvent },
   ClickedFavorite: {},
+  /** Header: "Add icon" picks one at random, like Notion; the icon opens the picker. */
+  ClickedAddIcon: {},
+  ClickedIcon: {},
+  ClickedAddCover: {},
+  ClickedCover: {},
+  ClickedRemoveCover: {},
+  ClickedPageOptions: {},
+  ClickedUnlock: {},
   ClickedRestore: { pageId: S.String },
   ClickedDeleteForever: { pageId: S.String },
   ClickedToggleTheme: {},
@@ -120,6 +131,13 @@ export const ClientMessage = S.Union([
   Message.SubmittedTitle,
   Message.GotEditorEvent,
   Message.ClickedFavorite,
+  Message.ClickedAddIcon,
+  Message.ClickedIcon,
+  Message.ClickedAddCover,
+  Message.ClickedCover,
+  Message.ClickedRemoveCover,
+  Message.ClickedPageOptions,
+  Message.ClickedUnlock,
   Message.ClickedRestore,
   Message.ClickedDeleteForever,
   Message.ClickedToggleTheme,
@@ -155,6 +173,13 @@ export const SaveTitle = Command.define('SaveTitle', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ pageId, title, actorId }) =>
     Workspace.use(workspace => workspace.updatePage(pageId, { title }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const ChangePage = Command.define('ChangePage', {
+  args: { pageId: S.String, change: PageChange, actorId: S.String },
+  messages: [Message.CompletedChange, Message.FailedChange],
+  execute: ({ pageId, change, actorId }) =>
+    Workspace.use(workspace => workspace.updatePage(pageId, patchOf(change), actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const SaveContent = Command.define('SaveContent', {
@@ -304,6 +329,77 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     }
     case 'search':
       return model.pages.map(entry => (entry.path === '' ? { value: entry.id, label: entry.title } : { value: entry.id, label: entry.title, keywords: entry.path }))
+    case 'icon':
+      return [
+        { value: 'random', label: 'Random', group: 'Actions' },
+        ...(model.page?.icon === '' ? [] : [{ value: 'remove', label: 'Remove', group: 'Actions' }]),
+        ...EMOJI.map(entry => ({ value: `emoji:${entry.char}`, label: entry.name.split(' ')[0] ?? entry.name, group: entry.group, keywords: entry.name })),
+      ]
+    case 'cover': {
+      const link = picker.query.trim()
+      return [
+        ...(isCoverUrl(link) ? [{ value: `url:${link}`, label: 'Use this image link', group: 'Link', keywords: link }] : []),
+        ...(model.page?.cover._tag === 'NoCover' ? [] : [{ value: 'remove', label: 'Remove cover', group: 'Actions' }]),
+        ...COVERS.map(cover => ({ value: `gallery:${cover.name}`, label: cover.label, group: cover.group, isChecked: model.page?.cover._tag === 'GalleryCover' && model.page.cover.name === cover.name })),
+      ]
+    }
+    case 'options': {
+      const page = model.page
+      if (page === null) return []
+      return [
+        { value: 'font:default', label: 'Default', group: 'Style', isChecked: page.font === 'default' },
+        { value: 'font:serif', label: 'Serif', group: 'Style', isChecked: page.font === 'serif' },
+        { value: 'font:mono', label: 'Mono', group: 'Style', isChecked: page.font === 'mono' },
+        { value: 'small', label: 'Small text', group: 'Page', isChecked: page.isSmallText },
+        { value: 'full', label: 'Full width', group: 'Page', isChecked: page.isFullWidth },
+        { value: 'lock', label: 'Lock page', group: 'Page', isChecked: page.isLocked },
+        { value: 'favorite', label: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', group: 'Page' },
+        { value: 'duplicate', label: 'Duplicate', group: 'Page', shortcut: 'Ctrl D' },
+        { value: 'move', label: 'Move to', group: 'Page', shortcut: 'Ctrl Shift P' },
+        { value: 'trash', label: 'Move to Trash', group: 'Page' },
+      ]
+    }
+  }
+}
+
+/** The page whose look may change: open, not in Trash, and (for the look) not locked. */
+const changeable = (model: Model, isLockAllowed = false): Page | null =>
+  model.page === null || model.isInTrash || (model.page.isLocked && !isLockAllowed) ? null : model.page
+
+const change = (model: Model, page: Page, pageChange: PageChange): UpdateReturn => ({ model: { ...model, picker: null }, commands: [ChangePage({ pageId: page.id, change: pageChange, actorId: model.me.id })] })
+
+const FONTS: ReadonlyArray<Page['font']> = ['default', 'serif', 'mono']
+
+/** A choice in the icon, cover or ••• picker; each value is checked again here. */
+const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn => {
+  const closed = { ...model, picker: null }
+  const page = changeable(model, picker.field === 'options')
+  if (page === null || page.id !== picker.pageId) return { model: closed }
+  switch (picker.field) {
+    case 'icon': {
+      const char = value.startsWith('emoji:') ? value.slice(6) : ''
+      return value === 'random' ? change(model, page, { _tag: 'SetIcon', icon: pickEmoji(`${page.id}:${page.updatedAt}:${page.icon}`) })
+        : value === 'remove' ? change(model, page, { _tag: 'SetIcon', icon: '' })
+        : isEmoji(char) ? change(model, page, { _tag: 'SetIcon', icon: char })
+        : { model: closed }
+    }
+    case 'cover': {
+      if (value === 'remove') return change(model, page, { _tag: 'SetCover', cover: { _tag: 'NoCover' } })
+      if (value.startsWith('gallery:') && isCoverName(value.slice(8))) return change(model, page, { _tag: 'SetCover', cover: { _tag: 'GalleryCover', name: value.slice(8) } })
+      if (value.startsWith('url:') && isCoverUrl(value.slice(4))) return change(model, page, { _tag: 'SetCover', cover: { _tag: 'ImageCover', url: value.slice(4) } })
+      return { model: closed }
+    }
+    default: {
+      const font = FONTS.find(entry => `font:${entry}` === value)
+      if (page.isLocked && value !== 'lock') return value === 'favorite' || value === 'duplicate' || value === 'move' ? choose(model, { ...picker, field: 'page' }, value) : { model: closed }
+      if (font !== undefined) return change(model, page, { _tag: 'SetFont', font })
+      switch (value) {
+        case 'small': return change(model, page, { _tag: 'SetSmallText', isOn: !page.isSmallText })
+        case 'full': return change(model, page, { _tag: 'SetFullWidth', isOn: !page.isFullWidth })
+        case 'lock': return change(model, page, { _tag: 'SetLocked', isOn: !page.isLocked })
+        default: return choose(model, { ...picker, field: 'page' }, value)
+      }
+    }
   }
 }
 
@@ -328,6 +424,10 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
         case 'open': return { model: closed, commands: [LoadUrl({ url: `/p/${picker.pageId}` })] }
         default: return { model: closed }
       }
+    case 'icon':
+    case 'cover':
+    case 'options':
+      return chooseLook(model, picker, value)
     case 'move': {
       if (value === 'section:workspace' || value === 'section:private') return { model: closed, commands: [MovePage({ pageId: picker.pageId, parentId: null, section: value === 'section:private' ? 'private' : 'workspace', actorId })] }
       const parentId = value.startsWith('page:') ? value.slice(5) : ''
@@ -375,6 +475,34 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
           ? { model: { ...model, titleDraft: null } }
           : { model: { ...model, titleDraft: null }, commands: [SaveTitle({ pageId: model.page.id, title: model.titleDraft, actorId: model.me.id })] },
       ClickedFavorite: () => (model.page === null ? { model } : { model, commands: [SetFavorite({ pageId: model.page.id, isFavorite: !model.isFavorite, actorId: model.me.id })] }),
+      ClickedAddIcon: () => {
+        const page = changeable(model)
+        return page === null || page.icon !== '' ? { model } : change(model, page, { _tag: 'SetIcon', icon: pickEmoji(`${page.id}:${page.updatedAt}`) })
+      },
+      ClickedIcon: () => {
+        const page = changeable(model)
+        return page === null ? { model } : { model: withPicker(model, openPicker('icon', page.id, ICON_ANCHOR)) }
+      },
+      ClickedAddCover: () => {
+        const page = changeable(model)
+        return page === null || page.cover._tag !== 'NoCover' ? { model } : change(model, page, { _tag: 'SetCover', cover: { _tag: 'GalleryCover', name: pickCover(`${page.id}:${page.updatedAt}`) } })
+      },
+      ClickedCover: () => {
+        const page = changeable(model)
+        return page === null ? { model } : { model: withPicker(model, openPicker('cover', page.id, COVER_ANCHOR)) }
+      },
+      ClickedRemoveCover: () => {
+        const page = changeable(model)
+        return page === null || page.cover._tag === 'NoCover' ? { model } : change(model, page, { _tag: 'SetCover', cover: { _tag: 'NoCover' } })
+      },
+      ClickedPageOptions: () => {
+        const page = changeable(model, true)
+        return page === null ? { model } : { model: withPicker(model, openPicker('options', page.id, OPTIONS_ANCHOR)) }
+      },
+      ClickedUnlock: () => {
+        const page = changeable(model, true)
+        return page === null || !page.isLocked ? { model } : change(model, page, { _tag: 'SetLocked', isOn: false })
+      },
       ClickedRestore: ({ pageId }) => (isKnown(model, pageId) ? { model, commands: [RestorePage({ pageId, actorId: model.me.id })] } : { model }),
       ClickedDeleteForever: ({ pageId }) => (model.trash.some(entry => entry.id === pageId) ? { model, commands: [DeletePage({ pageId, actorId: model.me.id })] } : { model }),
       ClickedToggleTheme: () => ({ model, commands: [SetTheme({ memberId: model.me.id, isDark: !model.me.isDark })] }),
@@ -434,7 +562,11 @@ const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
         ]) }, h),
       ...(model.page === null ? [] : [
         box({ as: 'span', class: 'px-2 text-[13px] text-muted-foreground', attributes: [h.Id('edited-at')], children: [`Edited ${formatAgo(model.page.updatedAt, model.now)}`] }, h),
+        ...(model.page.isLocked && !model.isInTrash ? [button({ variant: 'ghost', size: 'compact', id: 'page-locked', title: 'Unlock this page to edit it', onClick: Message.ClickedUnlock(), children: [Icon.icon('lock', { class: 'size-3.5' }, h), 'Locked'] }, h)] : []),
         button({ variant: 'ghost', size: 'icon-sm', id: 'favorite-toggle', ariaLabel: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', title: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', onClick: Message.ClickedFavorite(), children: [Icon.icon(model.isFavorite ? 'star' : 'star', { class: model.isFavorite ? 'size-4 fill-amber-400 text-amber-400' : 'size-4' }, h)] }, h),
+        ...(model.isInTrash ? [] : [box({ class: 'flex', style: { anchorName: OPTIONS_ANCHOR }, children: [
+            button({ variant: 'ghost', size: 'icon-sm', id: 'page-options', ariaLabel: 'Style, lock and more', title: 'Style, lock and more…', onClick: Message.ClickedPageOptions(), children: [Icon.icon('ellipsis', { class: 'size-4' }, h)] }, h),
+          ] }, h)]),
       ]),
     ] }, h)
 
@@ -445,14 +577,36 @@ const trashBanner = (page: Page, h: HtmlBuilder<Message>): Html =>
       button({ variant: 'outline', size: 'compact', id: 'delete-page', onClick: Message.ClickedDeleteForever({ pageId: page.id }), children: ['Delete from Trash'] }, h),
     ] }, h)
 
-const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html =>
-  box({ as: 'article', class: 'mx-auto w-full max-w-[708px] px-6 pt-20 pb-40', attributes: [h.Id('page-body')], children: [
-      box({ class: 'mb-2', children: [pageIcon(page.icon, h, 'lg')] }, h),
-      box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [
-          input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'inline-lg', onInput: title => Message.ChangedTitle({ title }) }, h),
+const HEADER_ACTIONS: HeaderActions<Message> = {
+  onAddIcon: Message.ClickedAddIcon(),
+  onIcon: Message.ClickedIcon(),
+  onAddCover: Message.ClickedAddCover(),
+  onCover: Message.ClickedCover(),
+  onRemoveCover: Message.ClickedRemoveCover(),
+}
+
+/** Cover, icon, title and blocks, in the page's font, text size and width. */
+const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
+  const isEditable = !model.isInTrash && !page.isLocked
+  const hasCover = page.cover._tag !== 'NoCover'
+  return box({ class: cn('flex flex-col', page.isSmallText ? 'text-[14px]' : 'text-[16px]', fontClass(page.font)), attributes: [
+      h.Id('page-body'),
+      h.DataAttribute('font', page.font),
+      ...(page.isSmallText ? [h.DataAttribute('small-text', '')] : []),
+      ...(page.isFullWidth ? [h.DataAttribute('full-width', '')] : []),
+    ], children: [
+      ...coverView(page, isEditable, HEADER_ACTIONS, h),
+      box({ as: 'article', class: cn('mx-auto w-full pb-40', page.isFullWidth ? 'max-w-none px-24' : 'max-w-[708px] px-6', hasCover ? 'pt-0' : 'pt-20'), children: [
+          box({ as: 'header', class: 'group/header', children: [
+              ...iconAndControls(page, isEditable, HEADER_ACTIONS, h),
+              box({ as: 'form', attributes: [h.Id('title-form'), h.OnSubmit(Message.SubmittedTitle()), h.OnFocusLeave(Message.SubmittedTitle())], children: [
+                  input({ id: 'page-title', value: model.titleDraft ?? page.title, placeholder: 'Untitled', ariaLabel: 'Page title', autocomplete: 'off', variant: 'title', isReadOnly: !isEditable, onInput: title => Message.ChangedTitle({ title }) }, h),
+                ] }, h),
+            ] }, h),
+          editorView(model, page, h),
         ] }, h),
-      editorView(model, page, h),
     ] }, h)
+}
 
 /** The page's blocks: the editor island, or read-only when locked or in Trash. */
 const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
@@ -504,7 +658,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         }, h),
       }),
       box({ as: 'main', class: 'flex min-w-0 flex-1 flex-col', children: [
-          region(h, { id: 'topbar', deps: [model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.now], render: () => topBar(model, h) }),
+          region(h, { id: 'topbar', deps: [model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
           ...(model.page !== null && model.isInTrash ? [trashBanner(model.page, h)] : []),
           box({ class: 'min-h-0 flex-1 overflow-y-auto', attributes: [h.DataAttribute('keep-scroll', 'page')], children: [
               model.view === 'trash'
@@ -518,6 +672,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         picker: model.picker,
         items: pickerItems(model),
         itemIcon: item => {
+          if (item.value.startsWith('emoji:')) return pageIcon(item.value.slice(6), h)
           const entry = model.pages.find(page => page.id === item.value || `page:${page.id}` === item.value)
           return entry === undefined ? undefined : pageIcon(entry.icon, h)
         },

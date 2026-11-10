@@ -8,8 +8,8 @@ import { anchoredStyle } from '@/lib/anchored'
 import * as Icon from '@/lib/icon'
 import { box, optionRow } from '@/app/view/design'
 
-/* The picker: a small filterable menu, used for page menus, "Move to" and
-   the search palette.
+/* The picker: a small filterable menu, used for page menus, "Move to", the
+   search palette, the icon and cover pickers and the page's ••• options.
 
    Its state lives in the page's Model (open, field, query, active row), so it
    works the same from a click on a property button and from a keyboard
@@ -21,7 +21,7 @@ import { box, optionRow } from '@/app/view/design'
    crease's `command` is the visual source (classes, spacing). It is not used
    directly: on the server its Enter key does nothing (EXPERIMENT.md, F2). */
 
-export const PickerField = S.Literals(['page', 'move', 'search'])
+export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options'])
 export type PickerField = typeof PickerField.Type
 
 export const Picker = S.Struct({
@@ -52,6 +52,9 @@ export const placeholder: Readonly<Record<PickerField, string>> = {
   page: 'Search actions…',
   move: 'Move page to…',
   search: 'Search pages…',
+  icon: 'Filter…',
+  cover: 'Search covers or paste an https:// image link…',
+  options: 'Search actions…',
 }
 
 /** Index of the first checked item: where a single-choice picker starts. */

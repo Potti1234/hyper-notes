@@ -93,7 +93,7 @@
 
 /* ── Page editor (src/app/editor/render.ts, editor.client.ts) ── */
 .nb-editor-host { display: block; position: relative; }
-.nb-editor { outline: none; padding-bottom: 30vh; caret-color: var(--foreground); line-height: 1.5; font-size: 16px; }
+.nb-editor { outline: none; padding-bottom: 30vh; caret-color: var(--foreground); line-height: 1.5; font-size: inherit; }
 .nb-block { position: relative; margin: 1px 0; border-radius: 4px; }
 .nb-row { display: flex; align-items: flex-start; gap: 4px; min-height: 1.5em; }
 .nb-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; padding: 3px 2px; outline: none; }
