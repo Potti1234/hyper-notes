@@ -42,6 +42,11 @@ export const pageText = (state: WorkspaceState, doc: ReadonlyArray<Block>): stri
         case 'InlineEquation': return piece.tex
       }
     })
+  return docText(doc, label)
+}
+
+/** A doc's text as one string, each piece of rich text read by `label`. */
+export const docText = (doc: ReadonlyArray<Block>, label: (text: RichText) => string): string => {
   const lines: Array<string> = []
   const walk = (blocks: ReadonlyArray<Block>): void => {
     for (const entry of blocks) {
@@ -54,6 +59,9 @@ export const pageText = (state: WorkspaceState, doc: ReadonlyArray<Block>): stri
   walk(doc)
   return lines.join(' ').replace(/\s+/g, ' ').trim()
 }
+
+/** Words in text as Notion counts them: runs of letters, digits and marks between spaces. */
+export const wordCount = (text: string): number => text.split(/\s+/).filter(word => /[\p{L}\p{N}]/u.test(word)).length
 
 export const snippetOf = (text: string, word: string): Snippet | null => {
   const at = text.toLowerCase().indexOf(word)

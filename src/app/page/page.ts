@@ -1,7 +1,7 @@
 import { plainText } from '../editor/text'
 import { Effect, Match as M, Option, Schema as S, Stream } from 'effect'
 import { Command, Subscription, type Update } from 'foldkit'
-import type { Document, Html, HtmlBuilder } from 'foldkit/html'
+import type { Attribute, Document, Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import * as Navigation from 'foldkit/navigation'
 
@@ -30,7 +30,7 @@ import { avatar, pageIcon } from '../view/icons'
 import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, NavDrag, NavDrop, navOf, sameNav, sidebar } from '../view/shell'
-import { SearchHit, searchPages } from '../search'
+import { SearchHit, docText, searchPages, wordCount } from '../search'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
 /* A page of the workspace: the sidebar, the page's top bar (breadcrumbs,
@@ -155,6 +155,7 @@ export const Message = defineMessageUnion({
   ClickedAddCover: {},
   ClickedCover: {},
   ClickedRemoveCover: {},
+  CopiedLink: {},
   ClickedReposition: {},
   MovedCover: { position: S.Number },
   ClickedSaveCover: {},
@@ -276,6 +277,7 @@ export const ClientMessage = S.Union([
   Message.ClickedAddCover,
   Message.ClickedCover,
   Message.ClickedRemoveCover,
+  Message.CopiedLink,
   Message.ClickedReposition,
   Message.MovedCover,
   Message.ClickedSaveCover,
@@ -785,7 +787,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'lock', label: 'Lock page', group: 'Page', isChecked: page.isLocked },
         { value: 'history', label: 'Page history', group: 'Page' },
         { value: 'favorite', label: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', group: 'Page' },
-        { value: 'copylink', label: 'Copy link', group: 'Page' },
+        { value: 'copylink', label: 'Copy link', group: 'Page', shortcut: 'Ctrl L' },
         { value: 'duplicate', label: 'Duplicate', group: 'Page', shortcut: 'Ctrl D' },
         { value: 'move', label: 'Move to', group: 'Page', shortcut: 'Ctrl Shift P' },
         { value: 'trash', label: 'Move to Trash', group: 'Page' },
@@ -1713,6 +1715,7 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
         const page = changeable(model)
         return page === null || page.cover._tag === 'NoCover' ? { model } : change(model, page, { _tag: 'SetCover', cover: { _tag: 'NoCover' } })
       },
+      CopiedLink: () => (model.page === null ? { model } : { model: { ...model, notice: 'Copied link to clipboard' } }),
       ClickedReposition: () => {
         const page = changeable(model)
         return page === null || page.cover._tag !== 'ImageCover' ? { model } : { model: { ...model, picker: null, coverDraft: page.coverPosition } }
@@ -1938,12 +1941,39 @@ const contentView = (model: Model, page: Page, h: HtmlBuilder<Message>): Readonl
   ]
 }
 
+/** Ctrl+L copies the page's link in the browser (public/copy-link.js), which says so with this event. */
+const onCopiedLink: Attribute<Message> = { _tag: 'OnCustomEvent', name: 'hypercopylink', f: () => Option.some(Message.CopiedLink()) }
+
+/** The ••• menu's footer, as in Notion: the page's word count and who edited it last, when. */
+export const optionsFooter = (model: Model): ReadonlyArray<string> => {
+  const page = model.page
+  if (page === null) return []
+  const label = (text: Parameters<typeof plainText>[0]): string =>
+    plainText(text, piece => {
+      switch (piece._tag) {
+        case 'PageMention': return model.pages.find(entry => entry.id === piece.pageId)?.title ?? ''
+        case 'PersonMention': return model.people.find(person => person.id === piece.memberId)?.name ?? ''
+        case 'DateMention': return piece.date
+        case 'InlineEquation': return piece.tex
+      }
+    })
+  const words = wordCount(docText(page.content, label))
+  const editor = page.updatedBy === model.me.id ? model.me.name : model.people.find(person => person.id === page.updatedBy)?.name
+  return [
+    `Word count: ${words.toLocaleString('en-US')} ${words === 1 ? 'word' : 'words'}`,
+    ...(editor === undefined ? [] : [`Last edited by ${editor}`]),
+    formatAgo(page.updatedAt, model.now),
+  ]
+}
+
 /** Cover, icon, title and blocks, in the page's font, text size and width. */
 const pageBody = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => {
   const isEditable = !model.isInTrash && !page.isLocked
   const hasCover = page.cover._tag !== 'NoCover'
   return box({ class: cn('flex flex-col', page.isSmallText ? 'text-[14px]' : 'text-[16px]', fontClass(page.font)), attributes: [
       h.Id('page-body'),
+      h.DataAttribute('copy-link', page.id),
+      onCopiedLink,
       h.DataAttribute('font', page.font),
       ...(page.isSmallText ? [h.DataAttribute('small-text', '')] : []),
       ...(page.isFullWidth ? [h.DataAttribute('full-width', '')] : []),
@@ -2202,6 +2232,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         onChoose: value => Message.ChosePicker({ value }),
         onClose: Message.ClosedPicker(),
         ...(model.picker.field === 'search' ? { title: 'Search' } : {}),
+        ...(model.picker.field === 'options' ? { footer: optionsFooter(model) } : {}),
       }, h)]),
       ...(model.notice === null ? [] : [box({ class: 'fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-md bg-foreground px-3 py-2 text-[13px] text-background', attributes: [h.Id('notice'), h.Role('status')], children: [model.notice, button({ variant: 'ghost', size: 'icon-xs', ariaLabel: 'Dismiss', onClick: Message.ClickedDismissNotice(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h)] }, h)]),
     ] }, h),

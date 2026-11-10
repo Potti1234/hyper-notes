@@ -142,6 +142,8 @@ export type PickerViewProps<Msg> = Readonly<{
   onChoose: (value: string) => Msg
   onClose: Msg
   title?: string
+  /** Muted lines under the list, such as the ••• menu's word count. */
+  footer?: ReadonlyArray<string>
 }>
 
 export const PICKER_INPUT_ID = 'picker-input'
@@ -215,6 +217,7 @@ export const pickerView = <Msg>(props: PickerViewProps<Msg>, h: HtmlBuilder<Msg>
           ),
         ] }, h),
       box({ class: cn('min-h-0 overflow-y-auto p-1', isCentered ? 'max-h-[360px]' : 'max-h-[300px]'), attributes: [h.Role('listbox'), h.AriaLabel(placeholder[picker.field])], children: visible.length === 0 ? [box({ class: 'px-2 py-6 text-center text-[13px] text-muted-foreground', children: ['No results'] }, h)] : rows }, h),
+      ...(props.footer === undefined || props.footer.length === 0 ? [] : [box({ class: 'flex flex-col gap-0.5 border-t px-3 py-2 text-[12px] text-muted-foreground', attributes: [h.Id('picker-footer')], children: props.footer.map(text => box({ children: [text] }, h)) }, h)]),
     ] }, h)
 
   return box({ class: 'contents', attributes: [h.Id('picker-layer')], children: [
