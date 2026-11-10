@@ -29,7 +29,7 @@ import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type Hea
 import { avatar, pageIcon } from '../view/icons'
 import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
-import { Nav, NavDrag, NavDrop, navOf, sameNav, sidebar } from '../view/shell'
+import { Nav, NavDrag, NavDrop, WORKSPACE_ANCHOR, navOf, sameNav, sidebar, workspaceName } from '../view/shell'
 import { SearchHit, docText, searchPages, wordCount } from '../search'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
@@ -132,6 +132,8 @@ export const Model = S.Struct({
   /** Where an image cover is being dragged to, before "Save position". */
   coverDraft: S.NullOr(S.Number),
   picker: S.NullOr(Picker),
+  /** Log out was chosen: the view renders the POST /logout form public/sign-out.js submits. */
+  isSigningOut: S.Boolean,
   titleDraft: S.NullOr(S.String),
   notice: S.NullOr(S.String),
   focus: S.NullOr(FocusRequest),
@@ -152,6 +154,7 @@ export const Message = defineMessageUnion({
   ClickedAdd: { parentId: S.NullOr(S.String), section: Section },
   ClickedMenu: { pageId: S.String, anchor: S.String },
   ClickedSearch: {},
+  ClickedWorkspaceMenu: {},
   ChangedPickerQuery: { query: S.String },
   PressedPickerKey: { key: S.String },
   ChosePicker: { value: S.String },
@@ -305,6 +308,7 @@ export const ClientMessage = S.Union([
   Message.ConfirmedDelete,
   Message.CanceledDelete,
   Message.ClickedToggleTheme,
+  Message.ClickedWorkspaceMenu,
   Message.ToggledSidebar,
   Message.ResizedSidebar,
   Message.ClickedDismissNotice,
@@ -661,7 +665,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isSigningOut: false, isBacklinksOpen: false, composer: null, activeThread: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, coverDraft: null, isConnected: false, viewers: [], isSearchTitlesOnly: false, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -789,6 +793,13 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
       return filterItems(model, picker.pageId, picker.query)
     case 'sorts':
       return sortItems(model)
+    case 'workspace':
+      return [
+        { value: 'current', label: workspaceName(model.me), group: model.me.email, isChecked: true },
+        { value: 'settings', label: 'Settings', group: 'Account' },
+        { value: 'theme', label: model.me.isDark ? 'Light theme' : 'Dark theme', group: 'Account', shortcut: 'Ctrl Shift L' },
+        { value: 'logout', label: 'Log out', group: 'Account' },
+      ]
     case 'addView':
       return D.LAYOUTS.map(layout => ({ value: `layout:${layout}`, label: D.LAYOUT_LABEL[layout], group: 'Layout' }))
     case 'options': {
@@ -940,6 +951,13 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'filter':
     case 'sorts':
       return chooseDatabase(model, picker, value)
+    case 'workspace':
+      switch (value) {
+        case 'settings': return { model: closed, commands: [LoadUrl({ url: '/settings' })] }
+        case 'theme': return { model: closed, commands: [SetTheme({ memberId: model.me.id, isDark: !model.me.isDark })] }
+        case 'logout': return { model: { ...closed, isSigningOut: true } }
+        default: return { model: closed }
+      }
     case 'move': {
       if (value === 'section:workspace' || value === 'section:private') return { model: closed, commands: [MovePage({ pageId: picker.pageId, parentId: null, section: value === 'section:private' ? 'private' : 'workspace', actorId })] }
       const parentId = value.startsWith('page:') ? value.slice(5) : ''
@@ -1680,6 +1698,7 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
       ClickedAdd: ({ parentId, section }) =>
         parentId !== null && !isKnown(model, parentId) ? { model } : { model, commands: [CreatePage({ parentId, section, actorId: model.me.id })] },
       ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: withPicker(model, openPicker('page', pageId, anchor)) } : { model }),
+      ClickedWorkspaceMenu: () => ({ model: withPicker(model, openPicker('workspace', '', WORKSPACE_ANCHOR)) }),
       ClickedSearch: () => ({ model: { ...withPicker(model, openPicker('search', '', null)), search: null, isSearchTitlesOnly: false }, commands: [SearchPages({ query: '', isTitlesOnly: false, actorId: model.me.id })] }),
       ToggledSearchTitlesOnly: () => {
         if (model.picker?.field !== 'search') return { model }
@@ -2263,6 +2282,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             onAdd: (parentId, section) => Message.ClickedAdd({ parentId, section }),
             onMenu: (pageId, anchor) => Message.ClickedMenu({ pageId, anchor }),
             onSearch: Message.ClickedSearch(),
+            onWorkspaceMenu: Message.ClickedWorkspaceMenu(),
             onCollapse: Message.ToggledSidebar({ isCollapsed: true }),
             onExpand: Message.ToggledSidebar({ isCollapsed: false }),
             onResize: width => Message.ResizedSidebar({ width }),
@@ -2307,6 +2327,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         ...(model.picker.field === 'search' ? { title: 'Search', filters: [{ id: 'search-titles-only', label: 'Only titles', isPressed: model.isSearchTitlesOnly, onToggle: Message.ToggledSearchTitlesOnly() }] } : {}),
         ...(model.picker.field === 'options' ? { footer: optionsFooter(model) } : {}),
       }, h)]),
+      ...(model.isSigningOut ? [box({ as: 'form', attributes: [h.Method('post'), h.Action('/logout'), h.Id('sign-out-form'), h.DataAttribute('sign-out', '')], children: [] }, h)] : []),
       ...(model.notice === null ? [] : [box({ class: 'fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-md bg-foreground px-3 py-2 text-[13px] text-background', attributes: [h.Id('notice'), h.Role('status')], children: [model.notice, button({ variant: 'ghost', size: 'icon-xs', ariaLabel: 'Dismiss', onClick: Message.ClickedDismissNotice(), children: [Icon.icon('x', { class: 'size-3.5' }, h)] }, h)] }, h)]),
     ] }, h),
 })

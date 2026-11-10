@@ -50,6 +50,7 @@ export const buttonVariants = cva(
           'h-8 gap-1 rounded-[min(var(--radius-md),10px)] px-2.5 text-[13px] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5',
         'icon-md': 'size-7 rounded-[min(var(--radius-md),10px)]',
         'icon-page': 'size-[78px] rounded-lg',
+        switcher: 'h-8 w-full min-w-0 justify-start gap-2 rounded-md px-1.5 text-[14px]',
       },
     },
     defaultVariants: {

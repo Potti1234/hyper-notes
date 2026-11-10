@@ -125,4 +125,30 @@ describe('sidebar', () => {
     assert.isNull(elsewhere.model.navDrag?.target)
     assert.isNull(PagePage.update(started.model, PagePage.Message.EndedNavDrag()).model.navDrag)
   })
+
+  it('the workspace switcher lists the account, settings, theme and log out', () => {
+    const opened = PagePage.update(model('demo-wiki'), PagePage.Message.ClickedWorkspaceMenu())
+    assert.strictEqual(opened.model.picker?.field, 'workspace')
+    assert.strictEqual(opened.model.picker?.anchor, '--workspace-menu')
+    const items = PagePage.pickerItems(opened.model)
+    assert.deepStrictEqual(items.map(item => item.value), ['current', 'settings', 'theme', 'logout'])
+    assert.strictEqual(items[0]?.group, avery.email)
+    assert.strictEqual(items[0]?.label, "Avery's hypernotes")
+    assert.strictEqual(items[2]?.label, avery.isDark ? 'Light theme' : 'Dark theme')
+  })
+
+  it('its choices open settings, switch the theme, or log out', () => {
+    const opened = PagePage.update(model('demo-wiki'), PagePage.Message.ClickedWorkspaceMenu()).model
+    const choose = (value: string) => PagePage.update(opened, PagePage.Message.ChosePicker({ value }))
+    assert.deepStrictEqual(argsOf(choose('settings'), 'LoadUrl'), { url: '/settings' })
+    assert.deepStrictEqual(argsOf(choose('theme'), 'SetTheme'), { memberId: 'avery', isDark: !avery.isDark })
+    const out = choose('logout')
+    assert.isTrue(out.model.isSigningOut)
+    assert.isNull(out.model.picker)
+    assert.deepStrictEqual(commands(out), [])
+    const current = choose('current')
+    assert.isNull(current.model.picker)
+    assert.isFalse(current.model.isSigningOut)
+    assert.deepStrictEqual(commands(current), [])
+  })
 })

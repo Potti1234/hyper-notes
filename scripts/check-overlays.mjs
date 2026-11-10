@@ -86,6 +86,9 @@ try {
       await measure(page, '#picker', `${at} the page menu of ${id}`)
       await closeWithEscape(page, '#picker')
     }
+    await page.locator('#workspace-menu').click()
+    await measure(page, '#picker', `${at} the workspace menu`)
+    await closeWithEscape(page, '#picker')
     await page.locator('#sidebar-search').click()
     await measure(page, '#picker', `${at} search`)
     await closeWithEscape(page, '#picker')

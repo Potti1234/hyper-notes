@@ -87,6 +87,16 @@ export const sameNav = (a: Nav, b: Nav): boolean => sameRows(a.favorites, b.favo
 /** The CSS anchor name of a row's ••• button (its page menu opens there). */
 export const rowAnchor = (where: string, pageId: string): string => `--row-${where}-${pageId.replace(/[^A-Za-z0-9_-]/g, '')}`
 
+/** The CSS anchor name of the workspace switcher (its menu opens there). */
+export const WORKSPACE_ANCHOR = '--workspace-menu'
+
+export const workspaceName = (me: Member): string => `${firstName(me.name)}'s hypernotes`
+
+const workspaceLabel = <Msg>(h: HtmlBuilder<Msg>, me: Member): ReadonlyArray<Html> => [
+  box({ as: 'span', class: 'flex size-[22px] shrink-0 items-center justify-center rounded-md bg-foreground text-[12px] font-semibold text-background', children: ['N'] }, h),
+  box({ as: 'span', class: 'min-w-0 truncate text-[14px] font-medium', children: [workspaceName(me)] }, h),
+]
+
 /** What the sidebar can do on pages that handle it; elsewhere rows are links. */
 export type SidebarActions<Msg> = Readonly<{
   onToggle: (pageId: string, isOpen: boolean) => Msg
@@ -95,6 +105,8 @@ export type SidebarActions<Msg> = Readonly<{
   /** The page's ••• menu, anchored to the row. */
   onMenu: (pageId: string, anchor: string) => Msg
   onSearch: Msg
+  /** The workspace switcher at the top: account email, settings, theme, log out. */
+  onWorkspaceMenu: Msg
   /** « or Ctrl+\\ closes the sidebar; the top bar opens it again. */
   onCollapse: Msg
   /** » in the hover peek of a closed sidebar keeps it open. */
@@ -199,10 +211,14 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
           ? [box({ class: SIDEBAR_PEEK.zone, attributes: [h.DataAttribute('sidebar-peek-zone', '')], children: [] }, h)]
           : [box({ class: 'absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-ring/40', attributes: [h.DataAttribute('resize-sidebar', ''), h.Id('sidebar-resize'), h.Title('Drag to resize')], children: [] }, h)]),
       box({ class: 'flex items-center gap-1 px-2 pt-2 pb-1', children: [
-          box({ class: 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1', children: [
-              box({ as: 'span', class: 'flex size-[22px] shrink-0 items-center justify-center rounded-md bg-foreground text-[12px] font-semibold text-background', children: ['N'] }, h),
-              box({ as: 'span', class: 'min-w-0 truncate text-[14px] font-medium', children: [`${firstName(props.me.name)}'s hypernotes`] }, h),
-            ] }, h),
+          actions === undefined
+            ? box({ class: 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1', children: workspaceLabel(h, props.me) }, h)
+            : box({ class: 'flex min-w-0 flex-1', style: { anchorName: WORKSPACE_ANCHOR }, children: [
+                button({ variant: 'ghost', size: 'switcher', id: 'workspace-menu', ariaLabel: 'Workspace menu', title: 'Settings, theme and log out', onClick: actions.onWorkspaceMenu, children: [
+                    ...workspaceLabel(h, props.me),
+                    Icon.icon('chevron-down', { class: 'size-3.5 shrink-0 text-muted-foreground' }, h),
+                  ] }, h),
+              ] }, h),
           ...(actions === undefined
             ? []
             : [isCollapsed

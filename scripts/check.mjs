@@ -25,7 +25,7 @@ const settle = page => page.waitForTimeout(250)
 const browser = await chromium.launch()
 const people = []
 /** Demo accounts (npm run demo:seed): the password is the first name. */
-const DEMO_EMAILS = { Avery: 'afinch@hypernotes.example', Morgan: 'mvale@hypernotes.example' }
+const DEMO_EMAILS = { Avery: 'afinch@hypernotes.example', Morgan: 'mvale@hypernotes.example', Riley: 'rquinn@hypernotes.example' }
 
 const signIn = async (name, path = '/') => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] })
@@ -795,6 +795,22 @@ try {
 
   const errors = people.flatMap(person => person.errors)
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
+
+  // WORKSPACE SWITCHER: the account email, Settings, and Log out.
+  await visit(avery.page, '/p/demo-wiki')
+  await avery.page.locator('#workspace-menu').click()
+  await avery.page.waitForSelector('#picker[data-field="workspace"]', { timeout: TIMEOUT })
+  check('the workspace menu shows the account email', (await avery.page.locator('#picker').textContent()).includes('afinch@hypernotes.example'))
+  await avery.page.locator('#picker [data-value="settings"]').click()
+  check('its Settings opens the settings page', await until(avery.page, () => location.pathname === '/settings'))
+  const leaving = await signIn('Riley', '/p/demo-wiki')
+  await leaving.page.locator('#workspace-menu').click()
+  await leaving.page.waitForSelector('#picker[data-field="workspace"]', { timeout: TIMEOUT })
+  await leaving.page.keyboard.type('log')
+  await leaving.page.keyboard.press('Enter')
+  check('Log out (typed, then Enter) signs out', await until(leaving.page, () => location.pathname === '/login'))
+  await leaving.page.goto(`${base}/p/demo-wiki`)
+  check('after it, pages ask to sign in again', await until(leaving.page, () => location.pathname === '/login'))
 } finally {
   await browser.close()
 }
