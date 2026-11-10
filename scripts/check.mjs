@@ -78,6 +78,8 @@ try {
   await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
   check('opening a page in the sidebar shows its children', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') !== null))
   check('opening is per person', (await rows(morgan.page, 'workspace')).includes('demo-onboarding') === false)
+  // The toggle carries the state it changes to: click it once the closing one is rendered.
+  await until(avery.page, () => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label')?.startsWith('Close') === true)
   await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
   await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
   check('closing hides them again', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null))
@@ -173,7 +175,18 @@ try {
   await openMenu(avery.page, 'workspace', copy)
   await choose(avery.page, 'Move to Trash')
   await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`) !== null, copy)
+  await avery.page.locator('#trash-search').fill('checklist v2')
+  check('searching Trash keeps the matching page and says where it was', await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`)?.textContent?.includes('In Getting Started') === true || document.querySelector(`[data-trash-row="${id}"]`)?.textContent?.includes('Deleted') === true, copy))
+  await avery.page.locator('#trash-search').fill('no such page here')
+  check('and shows "No matches" when nothing fits', await until(avery.page, () => document.querySelector('#trash-no-match') !== null && document.querySelector('[data-trash-row]') === null))
+  await avery.page.locator('#trash-search').fill('')
+  await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`) !== null, copy)
   await avery.page.getByRole('button', { name: 'Delete Release checklist v2 from Trash' }).click()
+  check('Delete from Trash asks first, focused on the delete button', await until(avery.page, () => document.activeElement?.id === 'confirm-delete'))
+  await avery.page.keyboard.press('Escape')
+  check('Esc keeps the page', await until(avery.page, id => document.querySelector('#confirm-delete-layer') === null && document.querySelector(`[data-trash-row="${id}"]`) !== null, copy))
+  await avery.page.getByRole('button', { name: 'Delete Release checklist v2 from Trash' }).click()
+  await avery.page.locator('#confirm-delete').click()
   check('Delete from Trash removes it for good', await until(avery.page, id => document.querySelector(`[data-trash-row="${id}"]`) === null, copy))
 
   // PAGE HEADER AND STYLE

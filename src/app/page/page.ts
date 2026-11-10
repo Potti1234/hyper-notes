@@ -38,7 +38,7 @@ import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 export const Crumb = S.Struct({ id: S.String, title: S.String, icon: S.String })
 export type Crumb = typeof Crumb.Type
 
-export const TrashEntry = S.Struct({ id: S.String, title: S.String, icon: S.String, trashedAt: S.Number, path: S.String })
+export const TrashEntry = S.Struct({ id: S.String, title: S.String, icon: S.String, trashedAt: S.Number, trashedBy: S.NullOr(S.String), path: S.String })
 export type TrashEntry = typeof TrashEntry.Type
 
 /** A page someone can see, for search and "Move to". */
@@ -89,6 +89,10 @@ export const Model = S.Struct({
   isShowingResolved: S.Boolean,
   versions: S.Array(VersionEntry),
   history: S.NullOr(History),
+  /** Filters the Trash list by title and location. */
+  trashQuery: S.String,
+  /** The page "Delete from Trash" asks about before deleting it for good. */
+  confirmDelete: S.NullOr(S.String),
   isFavorite: S.Boolean,
   isInTrash: S.Boolean,
   nav: Nav,
@@ -133,6 +137,9 @@ export const Message = defineMessageUnion({
   ClickedUnlock: {},
   ClickedRestore: { pageId: S.String },
   ClickedDeleteForever: { pageId: S.String },
+  ConfirmedDelete: { pageId: S.String },
+  CanceledDelete: {},
+  ChangedTrashQuery: { query: S.String },
   ClickedToggleTheme: {},
   ClickedDismissNotice: {},
   ClickedBacklinks: {},
@@ -195,6 +202,8 @@ export const ClientMessage = S.Union([
   Message.ClickedUnlock,
   Message.ClickedRestore,
   Message.ClickedDeleteForever,
+  Message.ConfirmedDelete,
+  Message.CanceledDelete,
   Message.ClickedToggleTheme,
   Message.ClickedDismissNotice,
   Message.ClickedBacklinks,
@@ -397,7 +406,7 @@ export const sliceOf = (state: WorkspaceState, pageId: string | null, memberId: 
     nav: navOf(state, memberId),
     pages: visible.filter(entry => !isTrashed(state.pages, entry)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, path: pathOf(state, entry), section: entry.section })),
     people: state.members.map(member => ({ id: member.id, name: member.name })),
-    trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, path: pathOf(state, entry) })),
+    trash: visible.filter(entry => entry.trashedAt !== null).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)).map(entry => ({ id: entry.id, title: titleOf(entry), icon: entry.icon, trashedAt: entry.trashedAt ?? 0, trashedBy: state.members.find(member => member.id === entry.trashedBy)?.name ?? null, path: pathOf(state, entry) })),
     now,
   }
 }
@@ -411,7 +420,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, trashQuery: '', confirmDelete: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -578,6 +587,18 @@ export const COMMENT_INPUT_ID = 'comment-input'
 const compose = (model: Model, composer: Composer): UpdateReturn =>
   canComment(model) ? { model: focusOn({ ...model, composer }, `#${COMMENT_INPUT_ID}`) } : { model }
 
+/** Drops the delete question when its page left the Trash (restored, or deleted by someone else). */
+const keepConfirm = (model: Model): Model =>
+  model.confirmDelete === null || model.trash.some(entry => entry.id === model.confirmDelete) ? model : { ...model, confirmDelete: null }
+
+/** Trash entries whose title or location has every word of the query. */
+export const trashMatches = (trash: ReadonlyArray<TrashEntry>, query: string): ReadonlyArray<TrashEntry> => {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(word => word !== '')
+  return words.length === 0 ? trash : trash.filter(entry => words.every(word => `${entry.title} ${entry.path}`.toLowerCase().includes(word)))
+}
+
+export const CONFIRM_DELETE_ID = 'confirm-delete'
+
 /** Closes the comment box when what it answers or edits is gone. */
 const keepComposer = (model: Model): Model => {
   const { composer } = model
@@ -693,7 +714,13 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
         return page === null || !page.isLocked ? { model } : change(model, page, { _tag: 'SetLocked', isOn: false })
       },
       ClickedRestore: ({ pageId }) => (isKnown(model, pageId) ? { model, commands: [RestorePage({ pageId, actorId: model.me.id })] } : { model }),
-      ClickedDeleteForever: ({ pageId }) => (model.trash.some(entry => entry.id === pageId) ? { model, commands: [DeletePage({ pageId, actorId: model.me.id })] } : { model }),
+      ClickedDeleteForever: ({ pageId }) => (model.trash.some(entry => entry.id === pageId) ? { model: focusOn({ ...model, confirmDelete: pageId }, `#${CONFIRM_DELETE_ID}`) } : { model }),
+      ConfirmedDelete: ({ pageId }) =>
+        model.confirmDelete === pageId && model.trash.some(entry => entry.id === pageId)
+          ? { model: { ...model, confirmDelete: null }, commands: [DeletePage({ pageId, actorId: model.me.id })] }
+          : { model: { ...model, confirmDelete: null } },
+      CanceledDelete: () => ({ model: { ...model, confirmDelete: null } }),
+      ChangedTrashQuery: ({ query }) => ({ model: { ...model, trashQuery: query.slice(0, 200) } }),
       ClickedToggleTheme: () => ({ model, commands: [SetTheme({ memberId: model.me.id, isDark: !model.me.isDark })] }),
       ClickedDismissNotice: () => ({ model: { ...model, notice: null } }),
       ClickedBacklinks: () => ({ model: { ...model, isBacklinksOpen: !model.isBacklinksOpen } }),
@@ -725,7 +752,7 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
         model.history === null || !canRestore(model) || !model.versions.some(version => version.id === versionId)
           ? { model }
           : { model: { ...model, history: null }, commands: [RestoreVersion({ versionId, actorId: model.me.id })] },
-      GotPage: ({ _tag: _, ...slice }) => ({ model: keepHistory(keepComposer({ ...model, ...slice })) }),
+      GotPage: ({ _tag: _, ...slice }) => ({ model: keepConfirm(keepHistory(keepComposer({ ...model, ...slice }))) }),
       SucceededCreate: ({ id }) => ({ model, commands: [LoadUrl({ url: `/p/${id}` })] }),
       SucceededTrash: () => ({ model }),
       FailedChange: ({ reason }) => ({ model: { ...model, notice: reason } }),
@@ -955,19 +982,50 @@ const editorView = (model: Model, page: Page, h: HtmlBuilder<Message>): Html => 
     : box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('read-only', page.id)], children: [...renderDocument(page.content, context(props), h)] }, h)
 }
 
-const trashView = (model: Model, h: HtmlBuilder<Message>): Html =>
-  box({ as: 'section', class: 'mx-auto w-full max-w-[708px] px-6 pt-16', attributes: [h.Id('trash')], children: [
+const trashView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const shown = trashMatches(model.trash, model.trashQuery)
+  return box({ as: 'section', class: 'mx-auto w-full max-w-[708px] px-6 pt-16', attributes: [h.Id('trash')], children: [
       box({ as: 'h1', class: 'mb-4 text-[32px] font-bold', children: ['Trash'] }, h),
-      ...(model.trash.length === 0 ? [box({ as: 'p', class: 'text-muted-foreground', children: ['No pages in Trash'] }, h)] : []),
-      ...model.trash.map(entry =>
+      ...(model.trash.length === 0
+        ? [box({ as: 'p', class: 'text-muted-foreground', children: ['No pages in Trash'] }, h)]
+        : [
+            box({ class: 'mb-2 flex items-center gap-2 rounded-md border border-border px-2', children: [
+                Icon.search({ class: 'size-4 shrink-0 text-muted-foreground' }, h),
+                input({ id: 'trash-search', value: model.trashQuery, placeholder: 'Search pages in Trash', ariaLabel: 'Search pages in Trash', autocomplete: 'off', variant: 'inline', onInput: query => Message.ChangedTrashQuery({ query }) }, h),
+              ] }, h),
+            ...(shown.length === 0 ? [box({ as: 'p', class: 'px-2 py-6 text-center text-muted-foreground', attributes: [h.Id('trash-no-match')], children: ['No matches in Trash'] }, h)] : []),
+          ]),
+      ...shown.map(entry =>
         box({ class: 'group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent', attributes: [h.DataAttribute('trash-row', entry.id)], children: [
             pageIcon(entry.icon, h),
-            box({ as: 'a', class: 'min-w-0 flex-1 truncate', attributes: [h.Href(`/p/${entry.id}`)], children: [entry.title, ...(entry.path === '' ? [] : [box({ as: 'span', class: 'ml-2 text-[12px] text-muted-foreground', children: [entry.path] }, h)])] }, h),
+            box({ as: 'a', class: 'flex min-w-0 flex-1 flex-col', attributes: [h.Href(`/p/${entry.id}`)], children: [
+                box({ as: 'span', class: 'min-w-0 truncate', children: [entry.title] }, h),
+                box({ as: 'span', class: 'min-w-0 truncate text-[12px] text-muted-foreground', children: [
+                    [entry.path === '' ? '' : `In ${entry.path} · `, `Deleted ${formatAgo(entry.trashedAt, model.now)}`, entry.trashedBy === null ? '' : ` by ${entry.trashedBy}`].join(''),
+                  ] }, h),
+              ] }, h),
             button({ variant: 'ghost', size: 'icon-xs', ariaLabel: `Restore ${entry.title}`, title: 'Restore', onClick: Message.ClickedRestore({ pageId: entry.id }), children: [Icon.icon('undo-2', { class: 'size-3.5' }, h)] }, h),
             button({ variant: 'ghost', size: 'icon-xs', ariaLabel: `Delete ${entry.title} from Trash`, title: 'Delete from Trash', onClick: Message.ClickedDeleteForever({ pageId: entry.id }), children: [Icon.icon('trash-2', { class: 'size-3.5' }, h)] }, h),
           ] }, h),
       ),
     ] }, h)
+}
+
+/** "Delete from Trash" asks first, like Notion: there is no undo. */
+const confirmDeleteView = (model: Model, pageId: string, h: HtmlBuilder<Message>): Html => {
+  const entry = model.trash.find(item => item.id === pageId)
+  return box({ class: 'contents', attributes: [h.Id('confirm-delete-layer')], children: [
+      box({ class: 'fixed inset-0 z-50 bg-black/40', attributes: [h.AriaHidden(true), h.OnClick(Message.CanceledDelete())], children: [] }, h),
+      box({ class: 'fixed top-[30vh] left-1/2 z-50 flex w-[min(380px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-3 rounded-lg border border-border bg-background p-5 text-center shadow-xl', attributes: [
+          h.Role('alertdialog'), h.AriaLabel('Delete page permanently'),
+          h.OnKeyDownPreventDefault(key => (key === 'Escape' ? Option.some(Message.CanceledDelete()) : Option.none())),
+        ], children: [
+          box({ as: 'p', class: 'text-[14px]', children: [`Are you sure you want to delete ${entry === undefined ? 'this page' : `“${entry.title}”`} permanently? This cannot be undone.`] }, h),
+          button({ variant: 'destructive', id: CONFIRM_DELETE_ID, onClick: Message.ConfirmedDelete({ pageId }), children: ['Yes. Delete this page'] }, h),
+          button({ variant: 'ghost', id: 'cancel-delete', onClick: Message.CanceledDelete(), children: ['Cancel'] }, h),
+        ] }, h),
+    ] }, h)
+}
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: `${model.view === 'trash' ? 'Trash' : model.page === null ? 'hypernotes' : titleOf(model.page)} · hypernotes`,
@@ -1000,12 +1058,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           ...(model.page !== null && model.isInTrash ? [trashBanner(model.page, h)] : []),
           box({ class: 'min-h-0 flex-1 overflow-y-auto', attributes: [h.DataAttribute('keep-scroll', 'page')], children: [
               model.view === 'trash'
-                ? region(h, { id: 'trash', deps: [model.trash], render: () => trashView(model, h) })
+                ? region(h, { id: 'trash', deps: [model.trash, model.trashQuery, model.now], render: () => trashView(model, h) })
                 : model.page === null
                   ? box({ as: 'p', class: 'p-16 text-center text-muted-foreground', attributes: [h.Id('empty')], children: [model.view === 'empty' ? 'No pages yet. Create one with + in the sidebar.' : 'This page does not exist or was deleted.'] }, h)
                   : region(h, { id: 'page-body', deps: [model.page, model.titleDraft, model.pages, model.crumbs, model.backlinks, model.isBacklinksOpen, model.comments, model.composer, model.isShowingResolved, model.me.id, model.now, model.isInTrash], render: () => pageBody(model, model.page as Page, h) }),
             ] }, h),
         ] }, h),
+      ...(model.confirmDelete === null ? [] : [region(h, { id: 'confirm-delete-layer', deps: [model.confirmDelete, model.trash], render: () => confirmDeleteView(model, model.confirmDelete as string, h) })]),
       ...(model.history === null ? [] : [region(h, {
         id: 'history',
         deps: [model.history, model.versions, model.pages, model.people, model.crumbs, model.now, model.page?.isLocked ?? null, model.isInTrash],
