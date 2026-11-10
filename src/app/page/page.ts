@@ -29,7 +29,7 @@ import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type Hea
 import { avatar, pageIcon } from '../view/icons'
 import { ADD_PROPERTY_ANCHOR, LAYOUT_ICON, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, calcAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
-import { Nav, navOf, sameNav, sidebar } from '../view/shell'
+import { Nav, NavDrag, NavDrop, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
@@ -103,6 +103,8 @@ export const Model = S.Struct({
   isFavorite: S.Boolean,
   isInTrash: S.Boolean,
   nav: Nav,
+  /** A sidebar row being dragged, and where it would land. */
+  navDrag: S.NullOr(NavDrag),
   pages: S.Array(PageEntry),
   /** Who `@` can mention. */
   people: S.Array(MemberRef),
@@ -129,6 +131,10 @@ export const PAGE_ACTIONS = ['favorite', 'duplicate', 'move', 'trash', 'open'] a
 
 export const Message = defineMessageUnion({
   ClickedToggle: { pageId: S.String, isOpen: S.Boolean },
+  StartedNavDrag: { pageId: S.String },
+  EnteredNavDrop: { drop: NavDrop },
+  DroppedNav: {},
+  EndedNavDrag: {},
   ClickedAdd: { parentId: S.NullOr(S.String), section: Section },
   ClickedMenu: { pageId: S.String, anchor: S.String },
   ClickedSearch: {},
@@ -246,6 +252,10 @@ export type Message = typeof Message.Type
 /** What a browser may post (each re-checked in update and by the store). */
 export const ClientMessage = S.Union([
   Message.ClickedToggle,
+  Message.StartedNavDrag,
+  Message.EnteredNavDrop,
+  Message.DroppedNav,
+  Message.EndedNavDrag,
   Message.ClickedAdd,
   Message.ClickedMenu,
   Message.ClickedSearch,
@@ -493,10 +503,10 @@ export const DuplicatePage = Command.define('DuplicatePage', {
 })
 
 export const MovePage = Command.define('MovePage', {
-  args: { pageId: S.String, parentId: S.NullOr(S.String), section: Section, actorId: S.String },
+  args: { pageId: S.String, parentId: S.NullOr(S.String), section: Section, beforeId: S.optionalKey(S.NullOr(S.String)), actorId: S.String },
   messages: [Message.CompletedChange, Message.FailedChange],
-  execute: ({ pageId, parentId, section, actorId }) =>
-    Workspace.use(workspace => workspace.movePage(pageId, { parentId, section, beforeId: null }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+  execute: ({ pageId, parentId, section, beforeId, actorId }) =>
+    Workspace.use(workspace => workspace.movePage(pageId, { parentId, section, beforeId: beforeId ?? null }, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
 })
 
 export const TrashPage = Command.define('TrashPage', {
@@ -623,7 +633,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, navDrag: null, db: emptyUi, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -814,6 +824,34 @@ const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn =
       }
     }
   }
+}
+
+/** A sidebar row and the rows open under it, in either section ('' rows when it is not there). */
+const visibleSubtree = (nav: Nav, pageId: string): ReadonlySet<string> => {
+  for (const rows of [nav.workspace, nav.private]) {
+    const at = rows.findIndex(row => row.id === pageId)
+    if (at < 0) continue
+    const depth = rows[at]?.depth ?? 0
+    const end = rows.findIndex((row, index) => index > at && row.depth <= depth)
+    return new Set(rows.slice(at, end < 0 ? undefined : end).map(row => row.id))
+  }
+  return new Set()
+}
+
+/** A sidebar drop: above a row makes the page its sibling there, onto a row
+ *  its last child (and opens it), the end of a section its last page. Never
+ *  onto the page itself or into its own subtree (the workspace checks too). */
+const dropNav = (model: Model, drag: NavDrag | null): UpdateReturn => {
+  if (drag === null || drag.target === null) return { model }
+  const { pageId, target } = drag
+  const actorId = model.me.id
+  if (visibleSubtree(model.nav, pageId).size === 0) return { model }
+  if (target.place === 'end') return { model, commands: [MovePage({ pageId, parentId: null, section: target.section, beforeId: null, actorId })] }
+  const row = model.nav[target.section].find(entry => entry.id === target.rowId)
+  if (row === undefined || visibleSubtree(model.nav, pageId).has(row.id)) return { model }
+  return target.place === 'before'
+    ? { model, commands: [MovePage({ pageId, parentId: row.parentId, section: target.section, beforeId: row.id, actorId })] }
+    : { model, commands: [MovePage({ pageId, parentId: row.id, section: target.section, beforeId: null, actorId }), ...(row.isOpen ? [] : [SetExpanded({ pageId: row.id, isOpen: true, actorId })])] }
 }
 
 const focusOn = (model: Model, selector: string): Model => ({ ...model, seq: model.seq + 1, focus: { selector, seq: model.seq + 1 } })
@@ -1603,6 +1641,11 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
     M.withReturnType<UpdateReturn>(),
     M.tagsExhaustive({
       ClickedToggle: ({ pageId, isOpen }) => (isKnown(model, pageId) ? { model, commands: [SetExpanded({ pageId, isOpen, actorId: model.me.id })] } : { model }),
+      StartedNavDrag: ({ pageId }) => (visibleSubtree(model.nav, pageId).size === 0 ? { model } : { model: { ...model, navDrag: { pageId, target: null } } }),
+      EnteredNavDrop: ({ drop }) =>
+        model.navDrag === null || (drop.place !== 'end' && model.nav[drop.section].every(row => row.id !== drop.rowId)) ? { model } : { model: { ...model, navDrag: { ...model.navDrag, target: drop } } },
+      DroppedNav: () => dropNav({ ...model, navDrag: null }, model.navDrag),
+      EndedNavDrag: () => ({ model: { ...model, navDrag: null } }),
       ClickedAdd: ({ parentId, section }) =>
         parentId !== null && !isKnown(model, parentId) ? { model } : { model, commands: [CreatePage({ parentId, section, actorId: model.me.id })] },
       ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: withPicker(model, openPicker('page', pageId, anchor)) } : { model }),
@@ -2077,12 +2120,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       ]),
       region(h, {
         id: 'sidebar',
-        deps: [model.me, model.nav, model.pageId, model.view],
+        deps: [model.me, model.nav, model.navDrag, model.pageId, model.view],
         render: () => sidebar({
           me: model.me,
           activeId: model.pageId,
           active: model.view === 'trash' ? '/?trash=1' : '',
           nav: model.nav,
+          drag: model.navDrag,
           actions: {
             onToggle: (pageId, isOpen) => Message.ClickedToggle({ pageId, isOpen }),
             onAdd: (parentId, section) => Message.ClickedAdd({ parentId, section }),
@@ -2090,6 +2134,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             onSearch: Message.ClickedSearch(),
             onCollapse: Message.ToggledSidebar({ isCollapsed: true }),
             onResize: width => Message.ResizedSidebar({ width }),
+            onDragStart: pageId => Message.StartedNavDrag({ pageId }),
+            onDragEnter: drop => Message.EnteredNavDrop({ drop }),
+            onDrop: Message.DroppedNav(),
+            onDragEnd: Message.EndedNavDrag(),
           },
           isDark: model.me.isDark,
           onToggleTheme: Message.ClickedToggleTheme(),

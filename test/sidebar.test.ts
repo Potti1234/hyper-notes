@@ -80,4 +80,49 @@ describe('sidebar', () => {
     assert.strictEqual(copied.model.notice, 'Copied link to clipboard')
     assert.deepStrictEqual(commands(copied), [])
   })
+
+  const dragTo = (pageId: string, drop: Parameters<typeof PagePage.Message.EnteredNavDrop>[0]['drop']) => {
+    const started = PagePage.update(model('demo-wiki'), PagePage.Message.StartedNavDrag({ pageId }))
+    const entered = PagePage.update(started.model, PagePage.Message.EnteredNavDrop({ drop }))
+    return PagePage.update(entered.model, PagePage.Message.DroppedNav())
+  }
+
+  it('a row dropped above another becomes its sibling there', () => {
+    const top = dragTo('demo-meetings', { place: 'before', rowId: 'demo-wiki', section: 'workspace' })
+    assert.isNull(top.model.navDrag)
+    assert.deepStrictEqual(argsOf(top, 'MovePage'), { pageId: 'demo-meetings', parentId: null, section: 'workspace', beforeId: 'demo-wiki', actorId: 'avery' })
+    const nested = dragTo('demo-meetings', { place: 'before', rowId: 'demo-style', section: 'workspace' })
+    assert.deepStrictEqual(argsOf(nested, 'MovePage'), { pageId: 'demo-meetings', parentId: 'demo-wiki', section: 'workspace', beforeId: 'demo-style', actorId: 'avery' })
+  })
+
+  it('a row dropped onto another goes inside it, last, and opens it', () => {
+    const inside = dragTo('demo-meetings', { place: 'inside', rowId: 'demo-style', section: 'workspace' })
+    assert.deepStrictEqual(argsOf(inside, 'MovePage'), { pageId: 'demo-meetings', parentId: 'demo-style', section: 'workspace', beforeId: null, actorId: 'avery' })
+    assert.deepStrictEqual(argsOf(inside, 'SetExpanded'), { pageId: 'demo-style', isOpen: true, actorId: 'avery' })
+    const open = dragTo('demo-meetings', { place: 'inside', rowId: 'demo-wiki', section: 'workspace' })
+    assert.isUndefined(argsOf(open, 'SetExpanded'))
+  })
+
+  it('the end of a section moves it there, even from the other section', () => {
+    const end = dragTo('demo-meetings', { place: 'end', rowId: '', section: 'private' })
+    assert.deepStrictEqual(argsOf(end, 'MovePage'), { pageId: 'demo-meetings', parentId: null, section: 'private', beforeId: null, actorId: 'avery' })
+  })
+
+  it('a page never lands on itself or inside its own subtree', () => {
+    assert.deepStrictEqual(commands(dragTo('demo-wiki', { place: 'inside', rowId: 'demo-wiki', section: 'workspace' })), [])
+    assert.deepStrictEqual(commands(dragTo('demo-wiki', { place: 'inside', rowId: 'demo-onboarding', section: 'workspace' })), [])
+    assert.deepStrictEqual(commands(dragTo('demo-wiki', { place: 'before', rowId: 'demo-style', section: 'workspace' })), [])
+  })
+
+  it('unknown rows, drops without a drag and ended drags change nothing', () => {
+    const idle = PagePage.update(model('demo-wiki'), PagePage.Message.EnteredNavDrop({ drop: { place: 'inside', rowId: 'demo-wiki', section: 'workspace' } }))
+    assert.isNull(idle.model.navDrag)
+    assert.deepStrictEqual(commands(PagePage.update(idle.model, PagePage.Message.DroppedNav())), [])
+    const unknown = PagePage.update(model('demo-wiki'), PagePage.Message.StartedNavDrag({ pageId: 'nope' }))
+    assert.isNull(unknown.model.navDrag)
+    const started = PagePage.update(model('demo-wiki'), PagePage.Message.StartedNavDrag({ pageId: 'demo-meetings' }))
+    const elsewhere = PagePage.update(started.model, PagePage.Message.EnteredNavDrop({ drop: { place: 'inside', rowId: 'nope', section: 'workspace' } }))
+    assert.isNull(elsewhere.model.navDrag?.target)
+    assert.isNull(PagePage.update(started.model, PagePage.Message.EndedNavDrag()).model.navDrag)
+  })
 })

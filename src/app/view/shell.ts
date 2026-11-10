@@ -19,6 +19,8 @@ import { avatar, pageIcon } from './icons'
 /** A sidebar row: a page at a depth of its tree. */
 export const NavRow = S.Struct({
   id: S.String,
+  /** Where a drop above this row puts the dragged page. */
+  parentId: S.NullOr(S.String),
   title: S.String,
   icon: S.String,
   depth: S.Number,
@@ -34,6 +36,18 @@ export const Nav = S.Struct({
 })
 export type Nav = typeof Nav.Type
 
+/** Where a dragged row would land: above a row, inside it, or at the end of a section. */
+export const NavDrop = S.Struct({
+  place: S.Literals(['before', 'inside', 'end']),
+  /** '' for the end of a section. */
+  rowId: S.String,
+  section: S.Literals(['workspace', 'private']),
+})
+export type NavDrop = typeof NavDrop.Type
+
+export const NavDrag = S.Struct({ pageId: S.String, target: S.NullOr(NavDrop) })
+export type NavDrag = typeof NavDrag.Type
+
 const visibleChildren = (state: WorkspaceState, parentId: string | null, section: Section | null, memberId: string): ReadonlyArray<Page> =>
   childrenOf(state.pages, parentId).filter(page => canSee(page, memberId) && (section === null || page.section === section))
 
@@ -42,7 +56,7 @@ const tree = (state: WorkspaceState, parentId: string | null, section: Section |
     // A database's rows are its pages, but the sidebar leaves them out, as Notion does.
     const hasChildren = page.database === null && visibleChildren(state, page.id, null, memberId).length > 0
     const isOpen = hasChildren && open.has(page.id)
-    const row: NavRow = { id: page.id, title: titleOf(page), icon: page.icon, depth, hasChildren, isOpen }
+    const row: NavRow = { id: page.id, parentId, title: titleOf(page), icon: page.icon, depth, hasChildren, isOpen }
     return [row, ...(isOpen ? tree(state, page.id, null, memberId, open, depth + 1) : [])]
   })
 
@@ -54,7 +68,7 @@ export const navOf = (state: WorkspaceState, memberId: string): Nav => {
     .sort((a, b) => a.position - b.position)
     .flatMap(row => {
       const page = state.pages.find(entry => entry.id === row.pageId)
-      return page === undefined || !canSee(page, memberId) || isTrashed(state.pages, page) ? [] : [{ id: page.id, title: titleOf(page), icon: page.icon, depth: 0, hasChildren: false, isOpen: false }]
+      return page === undefined || !canSee(page, memberId) || isTrashed(state.pages, page) ? [] : [{ id: page.id, parentId: null, title: titleOf(page), icon: page.icon, depth: 0, hasChildren: false, isOpen: false }]
     })
   return {
     favorites,
@@ -64,7 +78,7 @@ export const navOf = (state: WorkspaceState, memberId: string): Nav => {
 }
 
 const sameRow = (a: NavRow, b: NavRow | undefined): boolean =>
-  b !== undefined && a.id === b.id && a.title === b.title && a.icon === b.icon && a.depth === b.depth && a.hasChildren === b.hasChildren && a.isOpen === b.isOpen
+  b !== undefined && a.id === b.id && a.parentId === b.parentId && a.title === b.title && a.icon === b.icon && a.depth === b.depth && a.hasChildren === b.hasChildren && a.isOpen === b.isOpen
 
 const sameRows = (a: ReadonlyArray<NavRow>, b: ReadonlyArray<NavRow>): boolean => a.length === b.length && a.every((row, index) => sameRow(row, b[index]))
 
@@ -85,6 +99,11 @@ export type SidebarActions<Msg> = Readonly<{
   onCollapse: Msg
   /** The width public/sidebar-resize.js measured when the edge was let go. */
   onResize: (width: number) => Msg
+  /** Dragging a row: above another row reorders, onto one nests, below a section's last row moves it there. */
+  onDragStart: (pageId: string) => Msg
+  onDragEnter: (drop: NavDrop) => Msg
+  onDrop: Msg
+  onDragEnd: Msg
 }>
 
 export type SidebarProps<Msg> = Readonly<{
@@ -94,6 +113,7 @@ export type SidebarProps<Msg> = Readonly<{
   active: string
   nav: Nav
   actions?: SidebarActions<Msg>
+  drag?: NavDrag | null
   isDark: boolean
   onToggleTheme: Msg
 }>
@@ -104,9 +124,20 @@ const navRow = <Msg>(h: HtmlBuilder<Msg>, row: NavRow, where: 'favorites' | Sect
   const isActive = row.id === props.activeId
   const anchor = rowAnchor(where, row.id)
   const { actions } = props
-  return box({ class: cn(ROW, isActive && 'bg-sidebar-accent font-medium text-sidebar-foreground'), style: { paddingLeft: `${4 + row.depth * 12}px`, anchorName: anchor }, attributes: [h.DataAttribute('nav-row', row.id), h.DataAttribute('nav-section', where)], children: [
+  const drag = props.drag ?? null
+  const section = where === 'favorites' ? null : where
+  const target = drag?.target ?? null
+  const dropOn = target !== null && target.place !== 'end' && target.rowId === row.id && target.section === section ? target.place : null
+  const dropZone = (place: 'before' | 'inside') =>
+    actions === undefined || section === null || drag === null ? [] : [h.AllowDrop(), h.OnDragEnter(actions.onDragEnter({ place, rowId: row.id, section })), h.OnDrop(actions.onDrop)]
+  return box({ class: cn(ROW, isActive && 'bg-sidebar-accent font-medium text-sidebar-foreground', section !== null && drag?.pageId === row.id && 'opacity-50', dropOn === 'inside' && 'bg-sidebar-accent ring-1 ring-ring'), style: { paddingLeft: `${4 + row.depth * 12}px`, anchorName: anchor }, attributes: [
+      h.DataAttribute('nav-row', row.id), h.DataAttribute('nav-section', where),
+      ...(actions === undefined || section === null ? [] : [h.Draggable(true), h.OnDragStart(actions.onDragStart(row.id)), h.OnDragEnd(actions.onDragEnd)]),
+      ...(drag === null || section === null ? [] : [h.DataAttribute('nav-dragging', String(drag.pageId === row.id)), h.DataAttribute('nav-drop-on', dropOn ?? 'none')]),
+    ], children: [
+      ...(drag === null || section === null ? [] : [box({ class: cn('absolute inset-x-0 -top-[3px] z-10 min-h-[6px] rounded-full', dropOn === 'before' && 'bg-ring'), attributes: [h.Id(`nav-before-${where}-${row.id}`), ...dropZone('before')], children: [] }, h)]),
       // The icon turns into the open/close chevron on hover (Notion).
-      box({ class: 'relative flex size-6 shrink-0 items-center justify-center', children: [
+      box({ class: 'relative flex size-6 shrink-0 items-center justify-center', attributes: dropZone('inside'), children: [
           box({ as: 'span', class: cn('flex items-center justify-center', actions !== undefined && where !== 'favorites' && 'group-hover/row:invisible'), children: [pageIcon(row.icon, h)] }, h),
           ...(actions === undefined || where === 'favorites'
             ? []
@@ -114,7 +145,7 @@ const navRow = <Msg>(h: HtmlBuilder<Msg>, row: NavRow, where: 'favorites' | Sect
                   button({ variant: 'ghost', size: 'icon-xs', ariaLabel: row.isOpen ? `Close ${row.title}` : `Open ${row.title}`, title: row.isOpen ? 'Collapse' : 'Expand', id: `nav-toggle-${where}-${row.id}`, onClick: actions.onToggle(row.id, !row.isOpen), children: [Icon.icon(row.isOpen ? 'chevron-down' : 'chevron-right', { class: cn('size-3.5', !row.hasChildren && 'opacity-40') }, h)] }, h),
                 ] }, h)]),
         ] }, h),
-      box({ as: 'a', class: 'min-w-0 flex-1 truncate py-1', attributes: [h.Href(`/p/${row.id}`), ...(isActive ? [h.AriaCurrent('page')] : [])], children: [row.title] }, h),
+      box({ as: 'a', class: 'min-w-0 flex-1 truncate py-1', attributes: [h.Href(`/p/${row.id}`), ...(isActive ? [h.AriaCurrent('page')] : []), ...dropZone('inside')], children: [row.title] }, h),
       ...(actions === undefined
         ? []
         : [box({ class: cn('flex shrink-0 items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100'), children: [
@@ -122,6 +153,15 @@ const navRow = <Msg>(h: HtmlBuilder<Msg>, row: NavRow, where: 'favorites' | Sect
               ...(where === 'favorites' ? [] : [button({ variant: 'ghost', size: 'icon-xs', ariaLabel: `Add a page inside ${row.title}`, title: 'Add a page inside', id: `nav-add-${where}-${row.id}`, onClick: actions.onAdd(row.id, where), children: [Icon.plus({ class: 'size-3.5' }, h)] }, h)]),
             ] }, h)]),
     ] }, h)
+}
+
+/** Below a section's last row while a row is dragged: drops there end the section. */
+const endZone = <Msg>(h: HtmlBuilder<Msg>, section: Section, props: SidebarProps<Msg>): ReadonlyArray<Html> => {
+  const { actions } = props
+  const drag = props.drag ?? null
+  if (actions === undefined || drag === null) return []
+  const isOn = drag.target?.place === 'end' && drag.target.section === section
+  return [box({ class: cn('h-4 rounded-md', isOn && 'bg-ring/30'), attributes: [h.Id(`nav-drop-end-${section}`), h.DataAttribute('nav-drop-on', String(isOn)), h.AllowDrop(), h.OnDragEnter(actions.onDragEnter({ place: 'end', rowId: '', section })), h.OnDrop(actions.onDrop)], children: [] }, h)]
 }
 
 const sectionHeading = <Msg>(h: HtmlBuilder<Msg>, label: string, add: Msg | undefined, id: string): Html =>
@@ -178,8 +218,10 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
             : [sectionHeading(h, 'Favorites', undefined, 'nav-favorites'), ...props.nav.favorites.map(row => navRow(h, row, 'favorites', props))]),
           sectionHeading(h, 'Workspace', actions?.onAdd(null, 'workspace'), 'nav-workspace'),
           ...(props.nav.workspace.length === 0 ? [emptyHint('No pages inside')] : props.nav.workspace.map(row => navRow(h, row, 'workspace', props))),
+          ...endZone(h, 'workspace', props),
           sectionHeading(h, 'Private', actions?.onAdd(null, 'private'), 'nav-private'),
           ...(props.nav.private.length === 0 ? [emptyHint('No pages inside')] : props.nav.private.map(row => navRow(h, row, 'private', props))),
+          ...endZone(h, 'private', props),
           box({ class: 'pt-3', children: [linkRow(h, { href: '/?trash=1', label: 'Trash', icon: 'trash-2', isActive: props.active === '/?trash=1', id: 'sidebar-trash' })] }, h),
         ] }, h),
       box({ class: 'flex items-center gap-1 border-t px-2 py-2', children: [

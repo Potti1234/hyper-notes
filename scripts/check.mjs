@@ -454,10 +454,13 @@ try {
   await avery.page.locator(`#new-on-${month}-15`).click()
   check('+ on a day adds a row due that day', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1, `${month}-15`))
   await settle(avery.page)
-  if (await avery.page.locator(`[data-day="${month}-15"] [data-row]`).count() === 0) {
-    console.log('DIAG', await avery.page.evaluate(month => JSON.stringify({ month: document.querySelector('#database-calendar')?.getAttribute('data-month'), layout: document.querySelector('[data-layout]')?.getAttribute('data-layout'), rows: [...document.querySelectorAll('#database-calendar [data-row]')].map(row => [row.closest('[data-day]')?.getAttribute('data-day'), row.getAttribute('data-row')]), day: document.querySelector(`[data-day="${month}-15"]`)?.outerHTML.slice(0, 600), active: document.activeElement?.id }), month))
+  const calendarDiag = async () => console.log('DIAG', await avery.page.evaluate(month => JSON.stringify({ month: document.querySelector('#database-calendar')?.getAttribute('data-month'), layout: document.querySelector('[data-layout]')?.getAttribute('data-layout'), rows: [...document.querySelectorAll('#database-calendar [data-row]')].map(row => [row.closest('[data-day]')?.getAttribute('data-day'), row.getAttribute('data-row')]), day: document.querySelector(`[data-day="${month}-15"]`)?.outerHTML.slice(0, 600), active: document.activeElement?.id }), month))
+  try {
+    await drag(avery.page, `[data-day="${month}-15"] [data-row]`, `[data-day="${month}-16"]`)
+  } catch (error) {
+    await calendarDiag()
+    throw error
   }
-  await drag(avery.page, `[data-day="${month}-15"] [data-row]`, `[data-day="${month}-16"]`)
   check('dragging a row to another day moves its date', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1 && document.querySelectorAll(`[data-day="${day.slice(0, 8)}15"] [data-row]`).length === 0, `${month}-16`))
   await avery.page.locator('#view-demo-tasks-table').click()
   check('the first tab goes back to the table', await until(avery.page, () => document.querySelectorAll('#database-table [data-row]').length === 5))
@@ -648,6 +651,42 @@ try {
   const pageBefore = pageIdOf(avery.page)
   await avery.page.keyboard.press('Control+Alt+N')
   check('Ctrl+Alt+N makes a new page', await until(avery.page, before => location.pathname.startsWith('/p/') && location.pathname !== `/p/${before}`, pageBefore))
+
+  // SIDEBAR DRAG: above a row reorders, onto a row nests, below a section ends it.
+  const first = pageIdOf(avery.page)
+  await avery.page.keyboard.press('Control+Alt+N')
+  await until(avery.page, id => location.pathname.startsWith('/p/') && location.pathname !== `/p/${id}`, first)
+  const second = pageIdOf(avery.page)
+  const navRowAt = id => `[data-nav-row="${id}"][data-nav-section="private"]`
+  const dragRow = async (from, to, isReady, arg = null) => {
+    const transfer = await avery.page.evaluateHandle(() => new DataTransfer())
+    await avery.page.locator(navRowAt(from)).dispatchEvent('dragstart', { dataTransfer: transfer })
+    await until(avery.page, () => document.querySelector('[data-nav-dragging="true"]') !== null)
+    await avery.page.locator(to).dispatchEvent('dragenter', { dataTransfer: transfer })
+    await avery.page.waitForFunction(isReady, arg, { timeout: TIMEOUT })
+    await avery.page.locator(to).dispatchEvent('drop', { dataTransfer: transfer })
+    await until(avery.page, () => document.querySelector('[data-nav-dragging]') === null)
+    if (await avery.page.locator(navRowAt(from)).count() > 0) await avery.page.locator(navRowAt(from)).dispatchEvent('dragend', { dataTransfer: transfer })
+  }
+  await until(avery.page, ids => ids.every(id => document.querySelector(`#sidebar [data-nav-row="${id}"][data-nav-section="private"]`) !== null), [first, second])
+  await dragRow(second, `#nav-before-private-${first}`, id => document.querySelector(`[data-nav-row="${id}"][data-nav-section="private"]`)?.getAttribute('data-nav-drop-on') === 'before', first)
+  check('dragging a sidebar row above another moves it there', await until(avery.page, ([a, b]) => {
+    const ids = [...document.querySelectorAll('#sidebar [data-nav-section="private"]')].map(row => row.getAttribute('data-nav-row'))
+    return ids.indexOf(b) >= 0 && ids.indexOf(b) < ids.indexOf(a)
+  }, [first, second]))
+  await dragRow(second, `${navRowAt(first)} a`, id => document.querySelector(`[data-nav-row="${id}"][data-nav-section="private"]`)?.getAttribute('data-nav-drop-on') === 'inside', first)
+  check('dropping it onto a row puts it inside, with the parent opened', await until(avery.page, ([a, b]) => {
+    const rows = [...document.querySelectorAll('#sidebar [data-nav-section="private"]')]
+    const at = rows.findIndex(row => row.getAttribute('data-nav-row') === a)
+    return at >= 0 && rows[at + 1]?.getAttribute('data-nav-row') === b && rows[at + 1].style.paddingLeft === '16px'
+  }, [first, second]))
+  await dragRow(second, '#nav-drop-end-private', () => document.querySelector('#nav-drop-end-private')?.getAttribute('data-nav-drop-on') === 'true')
+  check('dropping it below the last row takes it back out, last', await until(avery.page, b => {
+    const rows = [...document.querySelectorAll('#sidebar [data-nav-section="private"]')]
+    return rows.at(-1)?.getAttribute('data-nav-row') === b && rows.at(-1).style.paddingLeft === '4px'
+  }, second))
+  await dragRow(first, `${navRowAt(first)} a`, () => document.querySelector('[data-nav-drop-on="inside"]') !== null)
+  check('a row dropped onto itself stays where it was', await until(avery.page, a => document.querySelector(`#sidebar [data-nav-row="${a}"][data-nav-section="private"]`) !== null, first))
 
   // SETTINGS: a theme preset follows the person onto every page, and back.
   await visit(avery.page, '/settings')
