@@ -1,5 +1,6 @@
 import { Data, Effect, Schema as S } from 'effect'
 
+import { isIconLink } from './icon-link'
 import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW, sidebarWidth } from './domain'
 import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf, nextId, numberRows } from './database'
 import { copyWithIds, find as findBlock, update as updateBlock } from './editor/blocks'
@@ -240,7 +241,8 @@ export const updatePage = (pageId: string, patch: PagePatch, actorId: string): O
       content = yield* decodeDocument(patch.content).pipe(Effect.mapError(() => new InvalidChange({ reason: 'That content cannot be saved.' })))
       if (!content.every(isSafeBlock)) return yield* invalid('Links and media need an http(s), mailto: or /page address.')
     }
-    const icon = patch.icon === undefined ? page.icon : [...patch.icon].slice(0, 4).join('')
+    if (patch.icon !== undefined && /^\w+:/.test(patch.icon) && !isIconLink(patch.icon)) return yield* invalid('Use an https:// image address.')
+    const icon = patch.icon === undefined ? page.icon : isIconLink(patch.icon) ? patch.icon : [...patch.icon].slice(0, 4).join('')
     const coverPosition = patch.coverPosition === undefined ? page.coverPosition : Math.max(0, Math.min(100, Math.round(patch.coverPosition)))
     if (patch.cover?._tag === 'ImageCover' && !/^https:\/\//.test(patch.cover.url)) return yield* invalid('Use an https:// image address.')
     const next: Page = {

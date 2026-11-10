@@ -32,6 +32,7 @@ import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open
 import { Nav, NavDrag, NavDrop, WORKSPACE_ANCHOR, navOf, sameNav, sidebar, workspaceName } from '../view/shell'
 import { SearchHit, docText, searchPages, wordCount } from '../search'
 import { InboxEntry, inboxOf, unreadCount } from '../inbox'
+import { isIconLink } from '../icon-link'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
 /* A page of the workspace: the sidebar, the page's top bar (breadcrumbs,
@@ -726,6 +727,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         : model.pages.map(entry => (entry.path === '' ? { value: entry.id, label: entry.title } : { value: entry.id, label: entry.title, keywords: entry.path, hint: entry.path }))
     case 'icon':
       return [
+        ...(isIconLink(picker.query.trim()) ? [{ value: `url:${picker.query.trim()}`, label: 'Use this image link', group: 'Link', keywords: picker.query.trim() }] : []),
         { value: 'random', label: 'Random', group: 'Actions' },
         ...(model.page?.icon === '' ? [] : [{ value: 'remove', label: 'Remove', group: 'Actions' }]),
         ...EMOJI.map(entry => ({ value: `emoji:${entry.char}`, label: entry.name.split(' ')[0] ?? entry.name, group: entry.group, keywords: entry.name })),
@@ -856,6 +858,7 @@ const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn =
       return value === 'random' ? change(model, page, { _tag: 'SetIcon', icon: pickEmoji(`${page.id}:${page.updatedAt}:${page.icon}`) })
         : value === 'remove' ? change(model, page, { _tag: 'SetIcon', icon: '' })
         : isEmoji(char) ? change(model, page, { _tag: 'SetIcon', icon: char })
+        : value.startsWith('url:') && isIconLink(value.slice(4)) ? change(model, page, { _tag: 'SetIcon', icon: value.slice(4) })
         : { model: closed }
     }
     case 'cover': {
@@ -2113,7 +2116,7 @@ const historyView = (model: Model, history: History, h: HtmlBuilder<Message>): H
           box({ class: 'min-w-0 flex-1 overflow-y-auto px-12 py-10', attributes: [h.Id('history-preview')], children: preview === null
             ? [box({ as: 'p', class: 'text-muted-foreground', children: [history.selectedId === null ? 'No versions yet. They appear as the page is edited.' : 'Loading…'] }, h)]
             : [
-                box({ as: 'h1', class: 'mb-4 flex min-w-0 items-center gap-2 text-[32px] font-bold', children: [...(preview.icon === '' ? [] : [preview.icon]), preview.title === '' ? 'Untitled' : preview.title] }, h),
+                box({ as: 'h1', class: 'mb-4 flex min-w-0 items-center gap-2 text-[32px] font-bold', children: [...(preview.icon === '' ? [] : [pageIcon(preview.icon, h, 'md')]), preview.title === '' ? 'Untitled' : preview.title] }, h),
                 box({ class: 'nb-editor nb-read-only', attributes: [h.DataAttribute('version-preview', preview.versionId)], children: [...renderDocument(preview.content, context(props), h)] }, h),
               ] }, h),
           box({ class: 'flex min-w-[260px] max-w-[260px] shrink-0 flex-col border-l border-border', children: [

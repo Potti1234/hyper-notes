@@ -1,8 +1,11 @@
 import { assert, describe, it } from '@effect/vitest'
+import { Effect } from 'effect'
 
 import * as PagePage from '@/app/page/page'
 import { DEMO_MEMBERS, demoData } from '@/app/seed'
 import { isEmoji } from '@/app/emoji'
+import { iconText } from '@/app/icon-link'
+import { updatePage } from '@/app/workspace'
 
 /* The page header and ••• options: each click or choice becomes one
    ChangePage Command with an explicit change, checked again in update
@@ -44,6 +47,23 @@ describe('page header', () => {
     assert.deepStrictEqual(changes(PagePage.update(opened.model, PagePage.Message.ChosePicker({ value: 'emoji:🚀' }))), [{ _tag: 'SetIcon', icon: '🚀' }])
     assert.deepStrictEqual(changes(PagePage.update(opened.model, PagePage.Message.ChosePicker({ value: 'emoji:<b>' }))), [])
     assert.deepStrictEqual(changes(PagePage.update(opened.model, PagePage.Message.ChosePicker({ value: 'remove' }))), [{ _tag: 'SetIcon', icon: '' }])
+  })
+
+  it('a pasted https image link becomes the icon; other links do not', () => {
+    const picker = PagePage.update(model('demo-wiki'), PagePage.Message.ClickedIcon()).model
+    const typed = PagePage.update(picker, PagePage.Message.ChangedPickerQuery({ query: ' https://example.com/icon.png ' })).model
+    assert.deepStrictEqual(PagePage.pickerItems(typed)[0], { value: 'url:https://example.com/icon.png', label: 'Use this image link', group: 'Link', keywords: 'https://example.com/icon.png' })
+    assert.deepStrictEqual(changes(PagePage.update(typed, PagePage.Message.PressedPickerKey({ key: 'Enter' }))), [{ _tag: 'SetIcon', icon: 'https://example.com/icon.png' }])
+    const plain = PagePage.update(picker, PagePage.Message.ChangedPickerQuery({ query: 'http://example.com/icon.png' })).model
+    assert.isFalse(PagePage.pickerItems(plain).some(item => item.value.startsWith('url:')))
+    assert.deepStrictEqual(changes(PagePage.update(picker, PagePage.Message.ChosePicker({ value: 'url:javascript:alert(1)' }))), [])
+    const data = demoData(NOW)
+    const context = { at: NOW, id: (prefix: string) => `${prefix}-test` }
+    const [saved] = Effect.runSync(updatePage('demo-wiki', { icon: 'https://example.com/icon.png' }, 'avery')(data, context))
+    assert.strictEqual(saved.icon, 'https://example.com/icon.png')
+    assert.strictEqual(Effect.runSync(Effect.flip(updatePage('demo-wiki', { icon: 'javascript:alert(1)' }, 'avery')(data, context))).reason, 'Use an https:// image address.')
+    assert.strictEqual(iconText('https://example.com/icon.png'), '')
+    assert.strictEqual(iconText('🚀'), '🚀')
   })
 
   it('covers: add a gallery cover, change it to an https link, remove it', () => {

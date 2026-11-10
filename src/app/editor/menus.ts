@@ -1,4 +1,5 @@
 import { EMOJI, type Emoji } from '../emoji'
+import { iconText } from '../icon-link'
 import type { MemberRef, PageRef } from './island'
 import { addDays, formatDate } from './render'
 import type { Color, Inline, KindTag } from './schema'
@@ -106,7 +107,7 @@ export const inlineMenuItems = (menu: InlineMenu, sources: InlineSources): Reado
   const typed = isIsoDate(needle) && addDays(needle, 0) === needle ? [needle] : []
   return [
     ...sources.members.filter(member => has(member.name)).slice(0, 4).map(member => ({ group: 'People', label: member.name, hint: '', piece: { _tag: 'PersonMention' as const, memberId: member.id, marks: PLAIN_MARKS } })),
-    ...sources.pages.filter(page => has(page.title || 'Untitled')).slice(0, 6).map(page => ({ group: 'Link to page', label: `${page.icon} ${page.title || 'Untitled'}`.trim(), hint: '', piece: { _tag: 'PageMention' as const, pageId: page.id, marks: PLAIN_MARKS } })),
+    ...sources.pages.filter(page => has(page.title || 'Untitled')).slice(0, 6).map(page => ({ group: 'Link to page', label: `${iconText(page.icon)} ${page.title || 'Untitled'}`.trim(), hint: '', piece: { _tag: 'PageMention' as const, pageId: page.id, marks: PLAIN_MARKS } })),
     ...[...DATE_WORDS.filter(([label]) => has(label)).map(([label, days]) => [label, addDays(sources.today, days)] as const), ...typed.map(date => [formatDate(date), date] as const)]
       .map(([label, date]) => ({ group: 'Date', label, hint: formatDate(date), piece: { _tag: 'DateMention' as const, date, marks: PLAIN_MARKS } })),
   ]
@@ -127,7 +128,7 @@ export const linkChoices = (value: string, pages: ReadonlyArray<PageRef>, pageId
   return [
     { group: 'Link', label: typed, url: normalizeLink(typed) },
     ...pages.filter(page => page.id !== pageId && (page.title || 'Untitled').toLowerCase().includes(needle)).slice(0, 6)
-      .map(page => ({ group: 'Link to page' as const, label: `${page.icon} ${page.title || 'Untitled'}`.trim(), url: `/p/${page.id}` })),
+      .map(page => ({ group: 'Link to page' as const, label: `${iconText(page.icon)} ${page.title || 'Untitled'}`.trim(), url: `/p/${page.id}` })),
   ]
 }
 

@@ -15,6 +15,7 @@ import { ANCHOR, colorClass, context, renderDocument } from './render'
 import { type Block, type Color, Document, type ToggleMark, hasText } from './schema'
 import { type Action, EditorState, type InlineMenu, Selection, apply, caret, initial, isCollapsed, ordered, targetIds } from './state'
 import * as T from './text'
+import { iconText } from '../icon-link'
 import { anchoredStyle } from '@/lib/anchored'
 
 /* The page editor island: a Foldkit program in the browser around the pure
@@ -850,7 +851,7 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
     return [panel(h, 'nb-prompt', [
       h.div([h.Class('nb-menu-heading')], [title]),
       h.div([h.Class('nb-menu-search nb-prompt-value'), h.Attribute('data-prompt', overlay.field)], [overlay.value === '' ? '…' : overlay.value]),
-      ...pages.map((page, index) => menuRow(h, index, overlay.active, `${page.icon} ${page.title || 'Untitled'}`.trim())),
+      ...pages.map((page, index) => menuRow(h, index, overlay.active, `${iconText(page.icon)} ${page.title || 'Untitled'}`.trim())),
       ...links.flatMap((choice, index) => [
         ...(choice.group !== links[index - 1]?.group ? [h.div([h.Class('nb-menu-heading')], [choice.group])] : []),
         menuRow(h, index, overlay.active, choice.label, choice.group === 'Link' ? 'Link' : ''),

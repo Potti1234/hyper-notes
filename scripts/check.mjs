@@ -243,6 +243,18 @@ try {
   await avery.page.keyboard.type('rocket')
   await avery.page.keyboard.press('Enter')
   check('typing filters it and Enter sets the emoji', await until(avery.page, () => document.querySelector('#page-icon')?.textContent?.includes(String.fromCodePoint(0x1f680)) === true && document.querySelector('#picker') === null))
+  await avery.page.locator('#page-icon').click()
+  await until(avery.page, () => document.activeElement?.id === 'picker-input')
+  await avery.page.keyboard.type('https://example.com/icon.png')
+  await settle(avery.page)
+  await avery.page.keyboard.press('Enter')
+  check('a pasted image link becomes the icon, in the header and the sidebar', await until(avery.page, () =>
+    document.querySelector('#page-icon img[data-icon-image]')?.getAttribute('src') === 'https://example.com/icon.png' && document.querySelector('[data-nav-row] img[data-icon-image][src="https://example.com/icon.png"]') !== null))
+  await avery.page.locator('#page-icon').click()
+  await until(avery.page, () => document.querySelector('#picker[data-field="icon"]') !== null)
+  await avery.page.keyboard.type('rocket')
+  await avery.page.keyboard.press('Enter')
+  await until(avery.page, () => document.querySelector('#page-icon')?.textContent?.includes(String.fromCodePoint(0x1f680)) === true)
   const chooseOption = async label => {
     await avery.page.locator('#page-options').click()
     await until(avery.page, () => document.querySelector('#picker[data-field="options"]') !== null)

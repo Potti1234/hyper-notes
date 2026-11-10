@@ -5,6 +5,7 @@ import type { MemberRef, PageRef } from './island'
 import type { Block, Color, Document, Inline, Marks } from './schema'
 import { hasText } from './schema'
 import { lengthOf } from './text'
+import { iconText } from '../icon-link'
 
 /* Renders a page document, for the editor (a contenteditable host in the
    browser) and read-only on the server. The text of every text block sits in one
@@ -94,7 +95,7 @@ const inline = <Msg>(piece: Inline, ctx: RenderContext, h: HtmlBuilder<Msg>): Ht
     }
     case 'PageMention': {
       const page = ctx.pages.get(piece.pageId)
-      return atom(h, piece.marks, 'page', [h.Attribute('data-page-id', piece.pageId)], `${page?.icon ?? ''} ${page?.title || 'Untitled'}`.trim())
+      return atom(h, piece.marks, 'page', [h.Attribute('data-page-id', piece.pageId)], `${iconText(page?.icon ?? '')} ${page?.title || 'Untitled'}`.trim())
     }
     case 'PersonMention': return atom(h, piece.marks, 'person', [h.Attribute('data-member-id', piece.memberId)], `@${ctx.members.get(piece.memberId)?.name ?? 'Unknown'}`)
     case 'DateMention': return atom(h, piece.marks, 'date', [h.Attribute('data-date', piece.date)], `@${formatDate(piece.date)}`)
@@ -136,7 +137,7 @@ const control = <Msg>(h: HtmlBuilder<Msg>, action: string, blockId: string, name
 const pageLink = <Msg>(pageId: string, ctx: RenderContext, h: HtmlBuilder<Msg>): Html => {
   const page = ctx.pages.get(pageId)
   return h.a([h.Class('nb-page-link'), h.Href(`/p/${pageId}`), h.Attribute('contenteditable', 'false'), h.Attribute('data-page-link', pageId)], [
-    h.span([h.Class('nb-page-link-icon')], [page?.icon || '']),
+    h.span([h.Class('nb-page-link-icon')], [iconText(page?.icon ?? '')]),
     h.span([h.Class('nb-page-link-title')], [page === undefined ? 'Page not found' : page.title || 'Untitled']),
   ])
 }
@@ -190,7 +191,7 @@ const body = <Msg>(target: Block, index: number, siblings: Document, doc: Docume
     }
     case 'Breadcrumb': return [h.nav([h.Class('nb-breadcrumb'), h.Attribute('contenteditable', 'false')], ctx.crumbs.flatMap((crumb, at) => [
       ...(at === 0 ? [] : [h.span([h.Class('nb-muted')], ['/'])]),
-      h.a([h.Href(`/p/${crumb.id}`)], [`${crumb.icon} ${crumb.title || 'Untitled'}`.trim()]),
+      h.a([h.Href(`/p/${crumb.id}`)], [`${iconText(crumb.icon)} ${crumb.title || 'Untitled'}`.trim()]),
     ]))]
     case 'Equation': return [control(h, 'equation', target.id, 'nb-equation', [kind.tex === '' ? 'Add a TeX equation' : kind.tex])]
     case 'ColumnList': return []

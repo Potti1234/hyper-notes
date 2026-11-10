@@ -1,5 +1,6 @@
 import type { Page } from './domain'
 import { titleOf } from './domain'
+import { iconText } from './icon-link'
 import type { Block, Inline, RichText } from './editor/schema'
 import type { WorkspaceState } from './store'
 import { canSee } from './workspace'
@@ -101,7 +102,7 @@ export const blocksMarkdown = (blocks: ReadonlyArray<Block>, names: Names): stri
 export const pageMarkdown = (state: WorkspaceState, page: Page, memberId: string): string => {
   const names = namesOf(state, memberId)
   const body = blocksMarkdown(page.content, names).replace(/\n{3,}/g, '\n\n').trim()
-  return `# ${page.icon === '' ? '' : `${page.icon} `}${titleOf(page)}\n${body === '' ? '' : `\n${body}\n`}`
+  return `# ${iconText(page.icon) === '' ? '' : `${page.icon} `}${titleOf(page)}\n${body === '' ? '' : `\n${body}\n`}`
 }
 
 /** A file name for the download: the title without characters file systems refuse. */

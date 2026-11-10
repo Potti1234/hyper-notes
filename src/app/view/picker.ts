@@ -57,7 +57,7 @@ export const placeholder: Readonly<Record<PickerField, string>> = {
   page: 'Search actions…',
   move: 'Move page to…',
   search: 'Search pages…',
-  icon: 'Filter…',
+  icon: 'Filter emoji or paste an image link…',
   cover: 'Search covers or paste an https:// image link…',
   options: 'Search actions…',
   property: 'Search actions…',
