@@ -187,6 +187,8 @@ try {
   await page.keyboard.press('Control+Enter')
   await page.keyboard.type('/callout')
   await page.waitForSelector('[data-overlay="nb-slash-menu"]', { timeout: TIMEOUT })
+  // The menu opens on "/"; wait for the typed query to filter it before Enter.
+  await page.waitForFunction(() => document.querySelector('[data-overlay="nb-slash-menu"] .nb-active')?.textContent?.includes('Callout'), null, { timeout: TIMEOUT })
   await page.keyboard.press('Enter')
   await settle()
   check('Ctrl+Enter leaves the code block; "/callout" makes a callout', (await kinds()).endsWith('Code,Callout'), await kinds())
