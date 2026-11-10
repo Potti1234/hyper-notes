@@ -681,6 +681,15 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
     case 'rollupProperty':
     case 'rollupFn':
       return rollupItems(model, picker.field, picker.pageId)
+    case 'idPrefix': {
+      const property = editableDatabase(model)?.database.properties.find(entry => entry.id === picker.pageId)
+      if (property?.type._tag !== 'Id') return []
+      const prefix = picker.query.trim()
+      return [
+        ...(prefix !== '' && D.isIdPrefix(prefix) ? [{ value: 'set', label: `Use ${D.idText(prefix, 1)}`, hint: 'Prefix' }] : []),
+        ...(property.type.prefix === '' ? [] : [{ value: 'clear', label: 'No prefix', hint: D.idText('', 1) }]),
+      ]
+    }
     case 'calculate': {
       const page = editableDatabase(model)
       const view = page === null ? null : activeView(page.database, model.db)
@@ -825,6 +834,7 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'rollupProperty':
     case 'rollupFn':
     case 'calculate':
+    case 'idPrefix':
     case 'addProperty':
     case 'view':
     case 'addView':
@@ -1032,6 +1042,7 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     ...(property.type._tag === 'Relation' ? [{ value: 'relate', label: 'Related to', group: 'Property', hint: relationName(model, property.type.databaseId) }] : []),
     ...(property.type._tag === 'Rollup' && page !== null ? rollupMenu(model, page, property.type) : []),
     ...(property.type._tag === 'Formula' ? [{ value: 'formula', label: 'Edit formula', group: 'Property' }] : []),
+    ...(property.type._tag === 'Id' ? [{ value: 'prefix', label: 'Prefix', group: 'Property', hint: property.type.prefix === '' ? 'None' : property.type.prefix }] : []),
     ...sorts,
     { value: 'hide', label: 'Hide in view', group: 'View' },
     { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
@@ -1206,6 +1217,7 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         case 'rollup:property': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupProperty', property.id, picker.anchor)) } : { model: closed }
         case 'rollup:fn': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupFn', property.id, picker.anchor)) } : { model: closed }
         case 'formula': return property.type._tag === 'Formula' ? { model: focusOn(withDb(closed, { formula: { propertyId: property.id, expression: property.type.expression } }), `#${FORMULA_INPUT_ID}`) } : { model: closed }
+        case 'prefix': return property.type._tag === 'Id' ? { model: withPicker(model, openPicker('idPrefix', property.id, picker.anchor)) } : { model: closed }
         case 'relate': return property.type._tag === 'Relation' ? { model: withPicker(model, openPicker('relation', property.id, picker.anchor)) } : { model: closed }
         case 'type': return { model: withPicker(model, openPicker('propertyType', property.id, picker.anchor, Math.max(0, D.PROPERTY_TAGS.indexOf(property.type._tag)))) }
         case 'hide': return view === null ? { model: closed } : changeDb(model, page, { _tag: 'SetHidden', viewId: view.id, propertyId: property.id, isHidden: true })
@@ -1213,6 +1225,11 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         case 'delete': return changeDb(model, page, { _tag: 'DeleteProperty', propertyId: property.id })
         default: return { model: closed }
       }
+    }
+    case 'idPrefix': {
+      const prefix = value === 'clear' ? '' : picker.query.trim()
+      if (property?.type._tag !== 'Id' || (value !== 'set' && value !== 'clear') || !D.isIdPrefix(prefix)) return { model: closed }
+      return changeDb(model, page, { _tag: 'SetIdPrefix', propertyId: property.id, prefix })
     }
     case 'calculate': {
       const fn = D.CALC_FNS.find(entry => entry === value)

@@ -475,6 +475,15 @@ try {
     const cells = [...document.querySelectorAll(`#database-table [id^="cell-"][id$="-${prop}"]`)]
     return cells.length > 0 && cells.every(cell => /^\d+$/.test(cell.textContent ?? ''))
   }, idProperty))
+  await avery.page.locator(`#header-${idProperty}`).click()
+  await choose(avery.page, 'Prefix')
+  await until(avery.page, () => document.querySelector('#picker[data-field="idPrefix"]') !== null)
+  await avery.page.keyboard.type('TASK')
+  await choose(avery.page, 'Use TASK-1')
+  check('an ID prefix shows on every row', await until(morgan.page, prop => {
+    const cells = [...document.querySelectorAll(`#database-table [id^="cell-"][id$="-${prop}"]`)]
+    return cells.length > 0 && cells.every(cell => /^TASK-\d+$/.test(cell.textContent ?? ''))
+  }, idProperty))
 
   // RELATIONS: a relation cell links rows of its database.
   await avery.page.locator('#add-property').click()

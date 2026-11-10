@@ -204,6 +204,11 @@ describe('databases: workspace operations', () => {
       const refused = yield* Effect.flip(workspace.setValue(third.id, propertyId, { _tag: 'NumberValue', value: 7 }, 'avery'))
       assert.strictEqual(refused.reason, 'IDs are numbered by themselves.')
       assert.strictEqual(D.idText('BUG', 3), 'BUG-3')
+      yield* workspace.changeDatabase(page.id, { _tag: 'SetIdPrefix', propertyId, prefix: ' BUG ' }, 'avery')
+      const prefixed = (yield* workspace.current).pages.find(entry => entry.id === page.id)?.database?.properties.find(entry => entry.id === propertyId)
+      assert.deepStrictEqual(prefixed?.type, { _tag: 'Id', prefix: 'BUG' })
+      const bad = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetIdPrefix', propertyId, prefix: 'NO SPACES' }, 'avery'))
+      assert.strictEqual(bad.reason, 'A prefix has up to 10 letters or digits.')
       assert.strictEqual(D.idText('', 3), '3')
     })))
 

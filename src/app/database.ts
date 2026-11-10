@@ -251,6 +251,9 @@ export const valueOf = (property: Property, row: Row): Value | null => {
   }
 }
 
+/** An ID prefix such as TASK: up to 10 letters or digits ('' for none). */
+export const isIdPrefix = (prefix: string): boolean => /^[A-Za-z0-9]{0,10}$/.test(prefix)
+
 export const idText = (prefix: string, n: number): string => (prefix === '' ? String(n) : `${prefix}-${n}`)
 
 /** The number the next row gets for an ID property: one past the highest so far (trashed rows included). */
@@ -684,6 +687,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
   S.TaggedStruct('SetRelation', { propertyId: S.String, databaseId: S.String }),
   S.TaggedStruct('SetFormula', { propertyId: S.String, expression: S.String }),
+  S.TaggedStruct('SetIdPrefix', { propertyId: S.String, prefix: S.String }),
   S.TaggedStruct('SetRollup', { propertyId: S.String, relationId: S.String, targetId: S.String, fn: RollupFn }),
   S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
   S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
@@ -838,6 +842,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
       const type: PropertyType = { _tag: 'Relation', databaseId: change.databaseId.slice(0, 200) }
       return { database: { ...database, properties: database.properties.map(entry => (entry.id === property.id ? { ...entry, type } : entry)) }, addedId: null }
     }
+    case 'SetIdPrefix':
+      return withProperty(change.propertyId, property => {
+        if (property.type._tag !== 'Id') return 'That property is not an ID.'
+        const prefix = change.prefix.trim()
+        return isIdPrefix(prefix) ? { ...property, type: { _tag: 'Id', prefix } } : 'A prefix has up to 10 letters or digits.'
+      })
     case 'SetFormula':
       return withProperty(change.propertyId, property => {
         if (property.type._tag !== 'Formula') return 'That property is not a formula.'
