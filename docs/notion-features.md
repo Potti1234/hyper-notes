@@ -11,17 +11,17 @@ deliberately left out (✗, with the reason). The status column is kept current.
 
 | Feature | Interaction | Status |
 |---|---|---|
-| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ⏳ fixed 240 px; resize, collapse and peek not built |
+| Sidebar | Fixed left column, 240 px, resizable by dragging its right edge (min 200, max 480); collapse with `«` in the sidebar header or `Ctrl+\`; when collapsed, hovering the left edge peeks it; `»` in the topbar opens it again | ✅ resize (saved per person) and collapse; hover peek ⏳ |
 | Workspace switcher | Top row: workspace icon + name + chevron; menu shows the account email, settings, log out | ⏳ |
 | Top shortcuts | Search (`Ctrl+K`/`Ctrl+P`), Home, Inbox, Settings | ✅ Search, Home, Settings; Inbox ⏳ |
-| New page | Pencil/compose button in the sidebar header and `Ctrl+N`: creates an untitled private page and opens it | ✅ button; `Ctrl+N` ⏳ |
+| New page | Pencil/compose button in the sidebar header and `Ctrl+N`: creates an untitled private page and opens it | ✅ button and `Ctrl+Alt+N` (browsers keep `Ctrl+N` for a new window) |
 | Sections | Favorites (only when non-empty), Shared (workspace pages), Private (my pages); each heading shows a `+` on hover that creates a page in that section | ✅ |
 | Page tree | Row = disclosure arrow (replaces the icon on hover; empty pages show "No pages inside"), icon (emoji or default page glyph), title (`Untitled` grey when empty); hover shows `•••` and `+` (add a page inside, expands the row); the open page is highlighted; expansion state persists per member | ✅ |
 | Row `•••` menu | Add to / Remove from Favorites, Copy link, Duplicate (`Ctrl+D`), Rename (inline input popover), Move to (page picker), Move to Trash; footer "Last edited by … · time" | ✅ favorite, duplicate, move, trash, open; Copy link and Rename ⏳ |
 | Drag in the tree | Drag a row onto another (nest inside: blue box) or between rows (reorder: blue line); drag between sections | ⏳ |
 | Trash | Sidebar entry opens a popover: search field, filter, list of trashed pages with restore (↶) and delete forever (🗑 with confirm); trashed pages open read-only with a red banner "This page is in Trash" + Restore page + Delete from Trash | ✅ as a Trash page with search instead of a popover |
 | Templates / Import | Out of scope for the first version | ✗ |
-| Dark mode | `Ctrl+Shift+L` toggles; theme presets on /settings (as in hyper-tasks) | ✅ toggle and presets; `Ctrl+Shift+L` ⏳ |
+| Dark mode | `Ctrl+Shift+L` toggles; theme presets on /settings (as in hyper-tasks) | ✅ |
 
 ## 2. Page chrome
 

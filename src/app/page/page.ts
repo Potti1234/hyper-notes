@@ -16,7 +16,7 @@ import { textarea } from '@/ui/textarea'
 
 import { requireMember } from '../auth'
 import { EMOJI, isEmoji, pickEmoji } from '../emoji'
-import { Comment, MAX_COMMENT, Member, Page, Section, formatAgo, titleOf } from '../domain'
+import { Comment, MAX_COMMENT, Member, Page, Section, formatAgo, sidebarWidth, titleOf } from '../domain'
 import * as B from '../editor/blocks'
 import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
@@ -155,6 +155,8 @@ export const Message = defineMessageUnion({
   CanceledDelete: {},
   ChangedTrashQuery: { query: S.String },
   ClickedToggleTheme: {},
+  ToggledSidebar: { isCollapsed: S.Boolean },
+  ResizedSidebar: { width: S.Number },
   ClickedDismissNotice: {},
   ClickedBacklinks: {},
   ClickedAddComment: {},
@@ -265,6 +267,8 @@ export const ClientMessage = S.Union([
   Message.ConfirmedDelete,
   Message.CanceledDelete,
   Message.ClickedToggleTheme,
+  Message.ToggledSidebar,
+  Message.ResizedSidebar,
   Message.ClickedDismissNotice,
   Message.ClickedBacklinks,
   Message.ClickedAddComment,
@@ -517,6 +521,12 @@ export const DeletePage = Command.define('DeletePage', {
   messages: [Message.CompletedChange, Message.FailedChange],
   execute: ({ pageId, actorId }) =>
     Workspace.use(workspace => workspace.deletePage(pageId, actorId)).pipe(done, Effect.catchTag('InvalidChange', ({ reason }) => failed(reason))),
+})
+
+export const SetSidebar = Command.define('SetSidebar', {
+  args: { memberId: S.String, width: S.optionalKey(S.Number), isCollapsed: S.optionalKey(S.Boolean) },
+  messages: [Message.CompletedChange],
+  execute: ({ memberId, ...change }) => Workspace.use(workspace => workspace.setSidebar(memberId, change)).pipe(done),
 })
 
 export const SetTheme = Command.define('SetTheme', {
@@ -1648,6 +1658,15 @@ const updatePage = (model: Model, message: PageMessage): UpdateReturn =>
       CanceledDelete: () => ({ model: { ...model, confirmDelete: null } }),
       ChangedTrashQuery: ({ query }) => ({ model: { ...model, trashQuery: query.slice(0, 200) } }),
       ClickedToggleTheme: () => ({ model, commands: [SetTheme({ memberId: model.me.id, isDark: !model.me.isDark })] }),
+      ToggledSidebar: ({ isCollapsed }) => ({
+        model: { ...model, me: { ...model.me, isSidebarCollapsed: isCollapsed } },
+        commands: [SetSidebar({ memberId: model.me.id, isCollapsed })],
+      }),
+      ResizedSidebar: ({ width }) => {
+        if (!Number.isFinite(width)) return { model }
+        const clamped = sidebarWidth(width)
+        return { model: { ...model, me: { ...model.me, sidebarWidth: clamped } }, commands: [SetSidebar({ memberId: model.me.id, width: clamped })] }
+      },
       ClickedDismissNotice: () => ({ model: { ...model, notice: null } }),
       ClickedBacklinks: () => ({ model: { ...model, isBacklinksOpen: !model.isBacklinksOpen } }),
       ClickedAddComment: () => compose(model, { _tag: 'NewDiscussion', text: '' }),
@@ -1724,6 +1743,9 @@ export const subscriptions = Subscription.make<Model, Message, Workspace>()(entr
 
 const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
   box({ as: 'header', class: 'flex h-11 shrink-0 items-center gap-1 px-3', attributes: [h.Id('topbar')], children: [
+      ...(model.me.isSidebarCollapsed === true
+        ? [button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-open', ariaLabel: 'Open sidebar', title: 'Open sidebar  Ctrl \\', onClick: Message.ToggledSidebar({ isCollapsed: false }), children: [Icon.icon('chevrons-right', { class: 'size-4' }, h)] }, h)]
+        : []),
       box({ as: 'nav', class: 'flex min-w-0 flex-1 items-center gap-0.5 text-[14px]', attributes: [h.AriaLabel('Breadcrumbs')], children: model.crumbs.flatMap((crumb, index) => [
           ...(index === 0 ? [] : [box({ as: 'span', class: 'px-0.5 text-muted-foreground', children: ['/'] }, h)]),
           box({ as: 'a', class: 'flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-accent', attributes: [h.Href(`/p/${crumb.id}`), h.DataAttribute('crumb', crumb.id)], children: [
@@ -2029,6 +2051,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       keyBindings(h, [
         { keys: 'Mod+K', message: Message.ClickedSearch(), isEnabled: model.picker === null },
         { keys: 'Mod+P', message: Message.ClickedSearch(), isEnabled: model.picker === null, whileTyping: 'Allow' },
+        // Browsers keep Ctrl+N for a new window, so a new page is Ctrl+Alt+N (Notion's web app too).
+        { keys: 'Mod+Alt+N', message: Message.ClickedAdd({ parentId: null, section: 'private' }), isEnabled: model.picker === null, whileTyping: 'Allow' },
+        { keys: 'Mod+\\', message: Message.ToggledSidebar({ isCollapsed: model.me.isSidebarCollapsed !== true }), whileTyping: 'Allow' },
+        { keys: 'Mod+Shift+L', message: Message.ClickedToggleTheme(), whileTyping: 'Allow' },
       ]),
       region(h, {
         id: 'sidebar',
@@ -2043,13 +2069,15 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             onAdd: (parentId, section) => Message.ClickedAdd({ parentId, section }),
             onMenu: (pageId, anchor) => Message.ClickedMenu({ pageId, anchor }),
             onSearch: Message.ClickedSearch(),
+            onCollapse: Message.ToggledSidebar({ isCollapsed: true }),
+            onResize: width => Message.ResizedSidebar({ width }),
           },
           isDark: model.me.isDark,
           onToggleTheme: Message.ClickedToggleTheme(),
         }, h),
       }),
       box({ as: 'main', class: 'flex min-w-0 flex-1 flex-col', children: [
-          region(h, { id: 'topbar', deps: [model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
+          region(h, { id: 'topbar', deps: [model.me.isSidebarCollapsed === true, model.crumbs, model.isFavorite, model.page?.updatedAt ?? null, model.page?.isLocked ?? null, model.isInTrash, model.now], render: () => topBar(model, h) }),
           ...(model.page !== null && model.isInTrash ? [trashBanner(model.page, h)] : []),
           box({ class: 'min-h-0 flex-1 overflow-y-auto', attributes: [h.DataAttribute('keep-scroll', 'page')], children: [
               model.view === 'trash'

@@ -29,6 +29,7 @@ import {
   setExpanded,
   setFavorite,
   setPreset,
+  setSidebar,
   setTheme,
   trashPage,
   updatePage,
@@ -85,6 +86,7 @@ export class Workspace extends Context.Service<
     readonly authenticate: (email: string, password: string) => Effect.Effect<Member | undefined>
     readonly addMember: (input: NewAccount) => Effect.Effect<Readonly<{ member: Member; isNew: boolean }>, InvalidChange>
     readonly setTheme: (memberId: string, isDark: boolean) => Effect.Effect<void>
+    readonly setSidebar: (memberId: string, change: Readonly<{ width?: number; isCollapsed?: boolean }>) => Effect.Effect<void>
     readonly setPreset: (memberId: string, theme: string) => Effect.Effect<void>
     readonly createPage: (input: NewPage, actorId: string) => Effect.Effect<Page, InvalidChange>
     readonly updatePage: (pageId: string, patch: PagePatch, actorId: string) => Effect.Effect<Page, InvalidChange>
@@ -134,6 +136,7 @@ export const fromBackend = (backend: Backend): Workspace['Service'] => ({
       return yield* traced(backend, 'addMember', addMember({ name: input.name, email, passwordHash }))
     }),
   setTheme: (memberId, isDark) => traced(backend, 'setTheme', setTheme(memberId, isDark)),
+  setSidebar: (memberId, change) => traced(backend, 'setSidebar', setSidebar(memberId, change)),
   setPreset: (memberId, theme) => traced(backend, 'setPreset', setPreset(memberId, theme)),
   createPage: (input, actorId) => traced(backend, 'createPage', createPage(input, actorId)),
   updatePage: (pageId, patch, actorId) => traced(backend, 'updatePage', updatePage(pageId, patch, actorId)),

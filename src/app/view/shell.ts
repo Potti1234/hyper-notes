@@ -1,12 +1,12 @@
-import { Schema as S } from 'effect'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { Option, Schema as S } from 'effect'
+import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
 
 import * as Icon from '@/lib/icon'
 import { cn } from '@/lib/utils'
 import { button } from '@/ui/button'
 import { kbd } from '@/ui/kbd'
 
-import { type Member, type Page, type Section, firstName, titleOf } from '../domain'
+import { type Member, type Page, type Section, firstName, sidebarWidth, titleOf } from '../domain'
 import type { WorkspaceState } from '../store'
 import { canSee, childrenOf, isTrashed } from '../workspace'
 import { box } from './design'
@@ -81,6 +81,10 @@ export type SidebarActions<Msg> = Readonly<{
   /** The page's ••• menu, anchored to the row. */
   onMenu: (pageId: string, anchor: string) => Msg
   onSearch: Msg
+  /** « or Ctrl+\\ closes the sidebar; the top bar opens it again. */
+  onCollapse: Msg
+  /** The width public/sidebar-resize.js measured when the edge was let go. */
+  onResize: (width: number) => Msg
 }>
 
 export type SidebarProps<Msg> = Readonly<{
@@ -132,10 +136,23 @@ const linkRow = <Msg>(h: HtmlBuilder<Msg>, config: Readonly<{ href: string; labe
       box({ as: 'span', class: 'min-w-0 flex-1 truncate', children: [config.label] }, h),
     ] }, h)
 
+const ResizeDetail = S.Struct({ width: S.Number })
+
+/** The sidebar's listener for its edge dragged in the browser (public/sidebar-resize.js). */
+const onResize = <Msg>(resize: (width: number) => Msg): Attribute<Msg> => ({
+  _tag: 'OnCustomEvent',
+  name: 'hypersidebar',
+  f: (event: CustomEvent<unknown>) => Option.map(S.decodeUnknownOption(ResizeDetail)(event.detail), detail => resize(detail.width)),
+})
+
 export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const { actions } = props
   const emptyHint = (text: string) => box({ as: 'p', class: 'px-3 py-1 text-[13px] text-muted-foreground', children: [text] }, h)
-  return box({ as: 'aside', class: 'flex h-screen w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[inset_-1px_0_0_var(--border)]', attributes: [h.Id('sidebar'), h.AriaLabel('Sidebar')], children: [
+  const isCollapsed = actions !== undefined && props.me.isSidebarCollapsed === true
+  return box({ as: 'aside', class: cn('relative h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[inset_-1px_0_0_var(--border)]', isCollapsed ? 'hidden' : 'flex'), style: { width: `${sidebarWidth(props.me.sidebarWidth)}px` }, attributes: [h.Id('sidebar'), h.AriaLabel('Sidebar'), ...(actions === undefined ? [] : [onResize(actions.onResize)])], children: [
+      ...(actions === undefined
+        ? []
+        : [box({ class: 'absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-ring/40', attributes: [h.DataAttribute('resize-sidebar', ''), h.Id('sidebar-resize'), h.Title('Drag to resize')], children: [] }, h)]),
       box({ class: 'flex items-center gap-1 px-2 pt-2 pb-1', children: [
           box({ class: 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1', children: [
               box({ as: 'span', class: 'flex size-[22px] shrink-0 items-center justify-center rounded-md bg-foreground text-[12px] font-semibold text-background', children: ['N'] }, h),
@@ -143,7 +160,8 @@ export const sidebar = <Msg>(props: SidebarProps<Msg>, h: HtmlBuilder<Msg>): Htm
             ] }, h),
           ...(actions === undefined
             ? []
-            : [button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-new-page', ariaLabel: 'New page', title: 'Create a new page', onClick: actions.onAdd(null, 'private'), children: [Icon.icon('square-pen', { class: 'size-4' }, h)] }, h)]),
+            : [button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-collapse', ariaLabel: 'Close sidebar', title: 'Close sidebar  Ctrl \\', onClick: actions.onCollapse, children: [Icon.icon('chevrons-left', { class: 'size-4' }, h)] }, h),
+              button({ variant: 'ghost', size: 'icon-sm', id: 'sidebar-new-page', ariaLabel: 'New page', title: 'Create a new page', onClick: actions.onAdd(null, 'private'), children: [Icon.icon('square-pen', { class: 'size-4' }, h)] }, h)]),
         ] }, h),
       box({ class: 'flex flex-col px-2', children: [
           ...(actions === undefined

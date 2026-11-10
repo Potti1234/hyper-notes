@@ -21,10 +21,21 @@ export const Member = S.Struct({
   isDark: S.Boolean,
   /** Their creaseui theme preset (`theme-<slug>` on the page root; '' is the app's own). */
   theme: S.String,
+  /** Their sidebar's width in px, dragged at its edge (SIDEBAR_WIDTH when missing). */
+  sidebarWidth: S.optionalKey(S.Number),
+  /** Closed with « or Ctrl+\\ and reopened from the top bar. */
+  isSidebarCollapsed: S.optionalKey(S.Boolean),
   /** Entered by the demo script (`npm run demo:seed`); `demo:clear` removes it. */
   isDemo: S.Boolean,
 })
 export type Member = typeof Member.Type
+
+export const SIDEBAR_WIDTH = 240
+export const SIDEBAR_MIN = 200
+export const SIDEBAR_MAX = 480
+/** A dragged width kept inside what Notion allows; anything unreadable is the default. */
+export const sidebarWidth = (width: number | undefined): number =>
+  width === undefined || !Number.isFinite(width) ? SIDEBAR_WIDTH : Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width)))
 
 /** Demo addresses use a reserved example domain. */
 export const EMAIL_DOMAIN = 'hypernotes.example'

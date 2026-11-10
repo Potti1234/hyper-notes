@@ -1,6 +1,6 @@
 import { Data, Effect, Schema as S } from 'effect'
 
-import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW } from './domain'
+import { type Comment, type Cover, type Expanded, type Favorite, type Font, MAX_COMMENT, MAX_DOC_BYTES, MAX_TITLE, MAX_VERSIONS, type Member, type Page, type PageVersion, type Section, VERSION_WINDOW, sidebarWidth } from './domain'
 import { type DatabaseChange, type Layout, type Value, TITLE, applyChange, checkValue, newDatabase, propertyOf, nextId, numberRows } from './database'
 import { copyWithIds } from './editor/blocks'
 import { type Block, Document } from './editor/schema'
@@ -106,6 +106,12 @@ const updateMember = (memberId: string, change: (member: Member) => Member): Op<
   Effect.succeed([undefined, { ...data, members: data.members.map(member => (member.id === memberId ? change(member) : member)) }] as const)
 
 export const setTheme = (memberId: string, isDark: boolean): Op<void> => updateMember(memberId, member => ({ ...member, isDark }))
+export const setSidebar = (memberId: string, change: Readonly<{ width?: number; isCollapsed?: boolean }>): Op<void> =>
+  updateMember(memberId, member => ({
+    ...member,
+    ...(change.width === undefined ? {} : { sidebarWidth: sidebarWidth(change.width) }),
+    ...(change.isCollapsed === undefined ? {} : { isSidebarCollapsed: change.isCollapsed }),
+  }))
 export const setPreset = (memberId: string, theme: string): Op<void> => updateMember(memberId, member => ({ ...member, theme }))
 
 // PAGES

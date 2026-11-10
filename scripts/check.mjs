@@ -82,6 +82,12 @@ try {
   await until(avery.page, () => document.querySelector('#nav-toggle-workspace-demo-wiki')?.getAttribute('aria-label')?.startsWith('Close') === true)
   await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
   await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+  // A click that lands while the sidebar region is being swapped can be lost; say so and click once more.
+  if (!(await avery.page.waitForFunction(() => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null, null, { timeout: 2000 }).then(() => true, () => false))) {
+    console.log('NOTE the close click was lost; clicking again')
+    await avery.page.hover('[data-nav-row="demo-wiki"][data-nav-section="workspace"]')
+    await avery.page.locator('#nav-toggle-workspace-demo-wiki').click()
+  }
   check('closing hides them again', await until(avery.page, () => document.querySelector('#sidebar [data-nav-row="demo-onboarding"]') === null))
 
   // A PAGE
@@ -436,6 +442,10 @@ try {
   await avery.page.hover(`[data-day="${month}-15"]`)
   await avery.page.locator(`#new-on-${month}-15`).click()
   check('+ on a day adds a row due that day', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1, `${month}-15`))
+  await settle(avery.page)
+  if (await avery.page.locator(`[data-day="${month}-15"] [data-row]`).count() === 0) {
+    console.log('DIAG', await avery.page.evaluate(month => JSON.stringify({ month: document.querySelector('#database-calendar')?.getAttribute('data-month'), layout: document.querySelector('[data-layout]')?.getAttribute('data-layout'), rows: [...document.querySelectorAll('#database-calendar [data-row]')].map(row => [row.closest('[data-day]')?.getAttribute('data-day'), row.getAttribute('data-row')]), day: document.querySelector(`[data-day="${month}-15"]`)?.outerHTML.slice(0, 600), active: document.activeElement?.id }), month))
+  }
   await drag(avery.page, `[data-day="${month}-15"] [data-row]`, `[data-day="${month}-16"]`)
   check('dragging a row to another day moves its date', await until(avery.page, day => document.querySelectorAll(`[data-day="${day}"] [data-row]`).length === 1 && document.querySelectorAll(`[data-day="${day.slice(0, 8)}15"] [data-row]`).length === 0, `${month}-16`))
   await avery.page.locator('#view-demo-tasks-table').click()
@@ -592,6 +602,41 @@ try {
   check('dark mode', await until(avery.page, () => document.querySelector('#app')?.classList.contains('dark')))
   await avery.page.locator('#theme-toggle').click()
   await until(avery.page, () => !document.querySelector('#app')?.classList.contains('dark'))
+
+  await avery.page.keyboard.press('Control+Shift+L')
+  check('Ctrl+Shift+L switches to dark mode', await until(avery.page, () => document.querySelector('#app')?.classList.contains('dark')))
+  await avery.page.keyboard.press('Control+Shift+L')
+  check('and back', await until(avery.page, () => !document.querySelector('#app')?.classList.contains('dark')))
+
+  // SIDEBAR: close and open it, Ctrl+\\, drag its edge; both stay after a reload.
+  await avery.page.locator('#sidebar-collapse').click()
+  check('« closes the sidebar', await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 0 && document.querySelector('#sidebar-open') !== null))
+  await visit(avery.page, '/p/demo-wiki')
+  check('it stays closed after a reload', await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 0))
+  await avery.page.locator('#sidebar-open').click()
+  check('» in the top bar opens it again', await until(avery.page, () => (document.querySelector('#sidebar')?.getBoundingClientRect().width ?? 0) > 0 && document.querySelector('#sidebar-open') === null))
+  await avery.page.keyboard.press('Control+Backslash')
+  check('Ctrl+\\ closes it', await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 0))
+  await avery.page.keyboard.press('Control+Backslash')
+  check('and opens it', await until(avery.page, () => (document.querySelector('#sidebar')?.getBoundingClientRect().width ?? 0) > 0))
+  const sidebarEdge = await avery.page.locator('#sidebar-resize').boundingBox()
+  await avery.page.mouse.move(sidebarEdge.x + sidebarEdge.width / 2, sidebarEdge.y + 200)
+  await avery.page.mouse.down()
+  await avery.page.mouse.move(sidebarEdge.x + sidebarEdge.width / 2 + 100, sidebarEdge.y + 200, { steps: 5 })
+  await avery.page.mouse.up()
+  await visit(avery.page, '/p/demo-wiki')
+  check('dragging its edge widens it, after a reload too', await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 340))
+  const edgeAgain = await avery.page.locator('#sidebar-resize').boundingBox()
+  await avery.page.mouse.move(edgeAgain.x + edgeAgain.width / 2, edgeAgain.y + 200)
+  await avery.page.mouse.down()
+  await avery.page.mouse.move(0, edgeAgain.y + 200, { steps: 5 })
+  await avery.page.mouse.up()
+  check('it is never narrower than 200px', await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 200))
+  await avery.page.evaluate(() => document.querySelector('#sidebar').dispatchEvent(new CustomEvent('hypersidebar', { bubbles: true, detail: { width: 240 } })))
+  await until(avery.page, () => document.querySelector('#sidebar')?.getBoundingClientRect().width === 240)
+  const pageBefore = pageIdOf(avery.page)
+  await avery.page.keyboard.press('Control+Alt+N')
+  check('Ctrl+Alt+N makes a new page', await until(avery.page, before => location.pathname.startsWith('/p/') && location.pathname !== `/p/${before}`, pageBefore))
 
   // SETTINGS: a theme preset follows the person onto every page, and back.
   await visit(avery.page, '/settings')
