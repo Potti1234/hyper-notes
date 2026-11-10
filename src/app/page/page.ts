@@ -798,6 +798,7 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'history', label: 'Page history', group: 'Page' },
         { value: 'favorite', label: model.isFavorite ? 'Remove from Favorites' : 'Add to Favorites', group: 'Page' },
         { value: 'copylink', label: 'Copy link', group: 'Page', shortcut: 'Ctrl L' },
+        { value: 'export', label: 'Export', group: 'Page', keywords: 'markdown download' },
         { value: 'duplicate', label: 'Duplicate', group: 'Page', shortcut: 'Ctrl D' },
         { value: 'move', label: 'Move to', group: 'Page', shortcut: 'Ctrl Shift P' },
         { value: 'trash', label: 'Move to Trash', group: 'Page' },
@@ -835,6 +836,8 @@ const chooseLook = (model: Model, picker: Picker, value: string): UpdateReturn =
     }
     default: {
       if (value === 'history') return openHistory(model)
+      // public/export-page.js starts the download during the click.
+      if (value === 'export') return { model: { ...model, picker: null } }
       const font = FONTS.find(entry => `font:${entry}` === value)
       if (page.isLocked && value !== 'lock') return value === 'favorite' || value === 'duplicate' || value === 'move' || value === 'copylink' ? choose(model, { ...picker, field: 'page' }, value) : { model: closed }
       if (font !== undefined) return change(model, page, { _tag: 'SetFont', font })

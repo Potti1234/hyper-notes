@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import * as Hyper from '@hyper-effect/core'
 
 import * as Auth from '@/app/auth'
+import * as Export from '@/app/export'
 import * as NotePage from '@/app/page/page'
 import * as Postgres from '@/app/postgres'
 import * as SettingsPage from '@/app/settings/page'
@@ -43,12 +44,13 @@ const Routes = Layer.mergeAll(
     ...page,
     path: '/p/:id',
     paths: ['/'],
-    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/copy-link.js', '/cover-reposition.js', '/assets/islands.js'],
+    scripts: ['/keep-scroll.js', '/enter-submits.js', '/column-resize.js', '/sidebar-resize.js', '/copy-link.js', '/cover-reposition.js', '/export-page.js', '/assets/islands.js'],
     prefetch: ['/p/*'],
     limits: { maxBodyBytes: 2 * 1024 * 1024 },
   }),
   Hyper.layer(SettingsPage.program, { ...page, path: '/settings' }),
   Auth.routes,
+  Export.layer,
   HttpRouter.add('GET', '/favicon.ico', HttpServerResponse.file(publicFile('favicon.svg'), { contentType: 'image/svg+xml' })),
   HttpRouter.add('GET', '/favicon.svg', HttpServerResponse.file(publicFile('favicon.svg'), { contentType: 'image/svg+xml' })),
   HttpRouter.add('GET', '/styles.css', HttpServerResponse.file(publicFile('styles.css'), { contentType: 'text/css' })),
@@ -57,6 +59,7 @@ const Routes = Layer.mergeAll(
   HttpRouter.add('GET', '/column-resize.js', HttpServerResponse.file(publicFile('column-resize.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/sidebar-resize.js', HttpServerResponse.file(publicFile('sidebar-resize.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/cover-reposition.js', HttpServerResponse.file(publicFile('cover-reposition.js'), { contentType: 'text/javascript' })),
+  HttpRouter.add('GET', '/export-page.js', HttpServerResponse.file(publicFile('export-page.js'), { contentType: 'text/javascript' })),
   HttpRouter.add('GET', '/copy-link.js', HttpServerResponse.file(publicFile('copy-link.js'), { contentType: 'text/javascript' })),
   HttpStaticServer.layer({ root: publicFile('assets'), prefix: '/assets' }),
   HttpStaticServer.layer({ root: publicFile('fonts'), prefix: '/fonts' }),
