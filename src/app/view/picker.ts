@@ -44,6 +44,10 @@ export type PickerItem = Readonly<{
   shortcut?: string
   /** Extra words the filter matches. */
   keywords?: string
+  /** Muted text after the label, such as where a page lives. */
+  hint?: string
+  /** A line under the label with the matching words highlighted. */
+  detail?: Readonly<{ before: string; match: string; after: string }>
 }>
 
 export const isMultiSelect = (_field: PickerField): boolean => false
@@ -151,7 +155,19 @@ export const pickerView = <Msg>(props: PickerViewProps<Msg>, h: HtmlBuilder<Msg>
               ]
             : []),
           ...(icon === undefined ? [] : [box({ as: 'span', class: 'flex w-4 shrink-0 justify-center text-muted-foreground', children: [icon] }, h)]),
-          box({ as: 'span', class: 'min-w-0 flex-1 truncate', children: [item.label] }, h),
+          item.detail === undefined && item.hint === undefined
+            ? box({ as: 'span', class: 'min-w-0 flex-1 truncate', children: [item.label] }, h)
+            : box({ as: 'span', class: 'flex min-w-0 flex-1 flex-col', children: [
+                box({ as: 'span', class: 'flex min-w-0 items-baseline gap-2', children: [
+                  box({ as: 'span', class: 'min-w-0 shrink-0 truncate', children: [item.label] }, h),
+                  ...(item.hint === undefined ? [] : [box({ as: 'span', class: 'min-w-0 truncate text-[12px] text-muted-foreground', attributes: [h.DataAttribute('picker-hint', '')], children: [item.hint] }, h)]),
+                ] }, h),
+                ...(item.detail === undefined ? [] : [box({ as: 'span', class: 'min-w-0 truncate text-[12px] text-muted-foreground', attributes: [h.DataAttribute('picker-detail', '')], children: [
+                  item.detail.before,
+                  box({ as: 'span', class: 'rounded-sm bg-accent font-medium text-foreground', attributes: [h.DataAttribute('picker-match', '')], children: [item.detail.match] }, h),
+                  item.detail.after,
+                ] }, h)]),
+              ] }, h),
           ...(!multi && item.isChecked === true ? [Icon.check({ class: 'size-4 text-muted-foreground' }, h)] : []),
           ...(item.shortcut === undefined ? [] : [kbd({ children: [item.shortcut] }, h)]),
         ] }, h),

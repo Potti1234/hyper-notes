@@ -26,6 +26,7 @@ import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type Hea
 import { avatar, pageIcon } from '../view/icons'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
+import { SearchHit, searchPages } from '../search'
 import { ancestorsOf, canSee, isTrashed, subtreeOf } from '../workspace'
 
 /* A page of the workspace: the sidebar, the page's top bar (breadcrumbs,
@@ -89,6 +90,8 @@ export const Model = S.Struct({
   isShowingResolved: S.Boolean,
   versions: S.Array(VersionEntry),
   history: S.NullOr(History),
+  /** Search results for `query`; shown only while the search box still says it. */
+  search: S.NullOr(S.Struct({ query: S.String, hits: S.Array(SearchHit) })),
   /** Filters the Trash list by title and location. */
   trashQuery: S.String,
   /** The page "Delete from Trash" asks about before deleting it for good. */
@@ -158,6 +161,7 @@ export const Message = defineMessageUnion({
   ClickedRestoreVersion: { versionId: S.String },
   GotVersion: { preview: VersionPreview },
   MissedVersion: { versionId: S.String },
+  GotSearch: { query: S.String, hits: S.Array(SearchHit) },
   GotPage: {
     me: Member,
     page: S.NullOr(Page),
@@ -311,6 +315,13 @@ export const LoadVersion = Command.define('LoadVersion', {
         : Message.GotVersion({ preview: { versionId, title: version.title, icon: version.icon, content: version.content } }))),
 })
 
+export const SearchPages = Command.define('SearchPages', {
+  args: { query: S.String, actorId: S.String },
+  messages: [Message.GotSearch],
+  execute: ({ query, actorId }) =>
+    Workspace.use(workspace => workspace.current).pipe(Effect.map(state => Message.GotSearch({ query, hits: searchPages(state, actorId, query) }))),
+})
+
 export const RestoreVersion = Command.define('RestoreVersion', {
   args: { versionId: S.String, actorId: S.String },
   messages: [Message.CompletedChange, Message.FailedChange],
@@ -420,7 +431,7 @@ const sameSlice = (a: Slice, b: Slice): boolean =>
 export type Flags = Readonly<{ me: Member; view: View; pageId: string | null } & Omit<Slice, 'me'>>
 
 export const init = (flags: Flags): Update.Return<Model, Message, Workspace> => ({
-  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, trashQuery: '', confirmDelete: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
+  model: { ...flags, isBacklinksOpen: false, composer: null, isShowingResolved: false, history: null, search: null, trashQuery: '', confirmDelete: null, picker: null, titleDraft: null, notice: null, focus: null, seq: 0 },
 })
 
 // UPDATE
@@ -454,7 +465,16 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
       ]
     }
     case 'search':
-      return model.pages.map(entry => (entry.path === '' ? { value: entry.id, label: entry.title } : { value: entry.id, label: entry.title, keywords: entry.path }))
+      return model.search !== null && model.search.query === picker.query
+        ? model.search.hits.map(hit => ({
+            value: hit.pageId,
+            label: hit.title,
+            group: picker.query.trim() === '' ? 'Recent' : 'Pages',
+            keywords: `${hit.path} ${picker.query}`,
+            ...(hit.path === '' ? {} : { hint: hit.path }),
+            ...(hit.snippet === null || hit.isTitleMatch ? {} : { detail: hit.snippet }),
+          }))
+        : model.pages.map(entry => (entry.path === '' ? { value: entry.id, label: entry.title } : { value: entry.id, label: entry.title, keywords: entry.path, hint: entry.path }))
     case 'icon':
       return [
         { value: 'random', label: 'Random', group: 'Actions' },
@@ -656,8 +676,13 @@ export const updateModel = (model: Model, message: Message): UpdateReturn =>
       ClickedAdd: ({ parentId, section }) =>
         parentId !== null && !isKnown(model, parentId) ? { model } : { model, commands: [CreatePage({ parentId, section, actorId: model.me.id })] },
       ClickedMenu: ({ pageId, anchor }) => (isKnown(model, pageId) && /^--[A-Za-z0-9_-]+$/.test(anchor) ? { model: withPicker(model, openPicker('page', pageId, anchor)) } : { model }),
-      ClickedSearch: () => ({ model: withPicker(model, openPicker('search', '', null)) }),
-      ChangedPickerQuery: ({ query }) => (model.picker === null ? { model } : { model: { ...model, picker: { ...model.picker, query: query.slice(0, 200), active: 0 } } }),
+      ClickedSearch: () => ({ model: { ...withPicker(model, openPicker('search', '', null)), search: null }, commands: [SearchPages({ query: '', actorId: model.me.id })] }),
+      ChangedPickerQuery: ({ query }) => {
+        if (model.picker === null) return { model }
+        const next = { ...model, picker: { ...model.picker, query: query.slice(0, 200), active: 0 } }
+        return model.picker.field === 'search' ? { model: next, commands: [SearchPages({ query: next.picker.query, actorId: model.me.id })] } : { model: next }
+      },
+      GotSearch: ({ query, hits }) => (model.picker?.field === 'search' && model.picker.query === query ? { model: { ...model, search: { query, hits } } } : { model }),
       PressedPickerKey: ({ key }) => {
         if (model.picker === null) return { model }
         const action = keyAction(model.picker, pickerItems(model), key)

@@ -243,6 +243,15 @@ try {
   }))
   await avery.page.keyboard.press('Enter')
   check('Enter opens the page', await avery.page.waitForURL('**/p/demo-onboarding', { timeout: TIMEOUT }).then(() => true, () => false))
+  await avery.page.locator('#sidebar-search').click()
+  check('an empty search lists recent pages', await until(avery.page, () => [...document.querySelectorAll('#picker [role="listbox"] > div')].some(node => node.textContent === 'Recent')))
+  await avery.page.keyboard.type('plain words')
+  check('search finds a page by its text and highlights the words, with where the page lives', await until(avery.page, () => {
+    const items = [...document.querySelectorAll('#picker [role="listbox"] [id^="picker-item-"]')]
+    return items.length === 1 && items[0].querySelector('[data-picker-match]')?.textContent === 'Plain' && items[0].querySelector('[data-picker-hint]')?.textContent === 'Engineering Wiki'
+  }))
+  await avery.page.keyboard.press('Enter')
+  check('Enter opens the page it found', await avery.page.waitForURL('**/p/demo-style', { timeout: TIMEOUT }).then(() => true, () => false))
 
   // COMMENTS: a discussion reaches the other person live; reply, edit, resolve, delete.
   await visit(avery.page, '/p/demo-onboarding')
