@@ -22,11 +22,12 @@ import { EditorEvent, MemberRef, PageEditor } from '../editor/island'
 import { context, renderDocument } from '../editor/render'
 import { Document as BlockDocument } from '../editor/schema'
 import * as D from '../database'
+import { MAX_FORMULA, parse as parseFormula } from '../formula'
 import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, PEEK_SCOPE, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, FORMULA_INPUT_ID, ParentDatabase, RelatedDatabase, LinkedPage, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -199,6 +200,9 @@ export const Message = defineMessageUnion({
   ClickedAddProperty: {},
   ChangedPropertyName: { name: S.String },
   SubmittedPropertyName: {},
+  ChangedFormula: { expression: S.String },
+  SubmittedFormula: {},
+  CancelledFormula: {},
   ClickedCell: { rowId: S.String, propertyId: S.String },
   ChangedCell: { text: S.String },
   SubmittedCell: {},
@@ -281,6 +285,8 @@ export const ClientMessage = S.Union([
   Message.ClickedHeader,
   Message.ClickedAddProperty,
   Message.SubmittedPropertyName,
+  Message.SubmittedFormula,
+  Message.CancelledFormula,
   Message.ClickedCell,
   Message.SubmittedCell,
   Message.CanceledCell,
@@ -1014,6 +1020,7 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     { value: 'type', label: 'Change type', group: 'Property', hint: D.TYPE_LABEL[property.type._tag] },
     ...(property.type._tag === 'Relation' ? [{ value: 'relate', label: 'Related to', group: 'Property', hint: relationName(model, property.type.databaseId) }] : []),
     ...(property.type._tag === 'Rollup' && page !== null ? rollupMenu(model, page, property.type) : []),
+    ...(property.type._tag === 'Formula' ? [{ value: 'formula', label: 'Edit formula', group: 'Property' }] : []),
     ...sorts,
     { value: 'hide', label: 'Hide in view', group: 'View' },
     { value: 'duplicate', label: 'Duplicate property', group: 'Property' },
@@ -1187,6 +1194,7 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
         case 'rollup:relation': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupRelation', property.id, picker.anchor)) } : { model: closed }
         case 'rollup:property': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupProperty', property.id, picker.anchor)) } : { model: closed }
         case 'rollup:fn': return property.type._tag === 'Rollup' ? { model: withPicker(model, openPicker('rollupFn', property.id, picker.anchor)) } : { model: closed }
+        case 'formula': return property.type._tag === 'Formula' ? { model: focusOn(withDb(closed, { formula: { propertyId: property.id, expression: property.type.expression } }), `#${FORMULA_INPUT_ID}`) } : { model: closed }
         case 'relate': return property.type._tag === 'Relation' ? { model: withPicker(model, openPicker('relation', property.id, picker.anchor)) } : { model: closed }
         case 'type': return { model: withPicker(model, openPicker('propertyType', property.id, picker.anchor, Math.max(0, D.PROPERTY_TAGS.indexOf(property.type._tag)))) }
         case 'hide': return view === null ? { model: closed } : changeDb(model, page, { _tag: 'SetHidden', viewId: view.id, propertyId: property.id, isHidden: true })
@@ -1301,6 +1309,21 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
     case 'ClickedAddProperty': {
       const page = editableDatabase(model)
       return page === null ? { model } : { model: withPicker(model, openPicker('addProperty', page.id, ADD_PROPERTY_ANCHOR)) }
+    }
+    case 'ChangedFormula':
+      return model.db.formula === null ? { model } : { model: withDb(model, { formula: { ...model.db.formula, expression: message.expression.slice(0, MAX_FORMULA) } }) }
+    case 'CancelledFormula':
+      return { model: withDb(model, { formula: null }) }
+    case 'SubmittedFormula': {
+      const editing = model.db.formula
+      const page = editableDatabase(model)
+      const property = page?.database.properties.find(entry => entry.id === editing?.propertyId)
+      if (editing === null || page === null || property?.type._tag !== 'Formula') return { model: withDb(model, { formula: null }) }
+      if (editing.expression.trim() !== '' && typeof parseFormula(editing.expression) === 'string') return { model }
+      const closed = withDb(model, { formula: null })
+      return editing.expression === property.type.expression
+        ? { model: closed }
+        : { model: closed, commands: [ChangeDatabase({ pageId: page.id, change: { _tag: 'SetFormula', propertyId: property.id, expression: editing.expression }, actorId: model.me.id })] }
     }
     case 'ChangedPropertyName':
       return model.db.renaming === null ? { model } : { model: withDb(model, { renaming: { ...model.db.renaming, name: message.name.slice(0, D.MAX_NAME) } }) }
@@ -1482,7 +1505,7 @@ const keepHistory = (model: Model): Model => {
 
 /** The page's update without the focus wrapper, for Story tests. */
 const DATABASE_TAGS = [
-  'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName',
+  'ClickedMakeDatabase', 'ClickedDbView', 'ClickedViewMenu', 'ClickedAddView', 'ClickedHeader', 'ClickedAddProperty', 'ChangedPropertyName', 'SubmittedPropertyName', 'ChangedFormula', 'SubmittedFormula', 'CancelledFormula',
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
@@ -1690,6 +1713,9 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   addProperty: Message.ClickedAddProperty(),
   propertyName: name => Message.ChangedPropertyName({ name }),
   submitPropertyName: Message.SubmittedPropertyName(),
+  formula: expression => Message.ChangedFormula({ expression }),
+  submitFormula: Message.SubmittedFormula(),
+  cancelFormula: Message.CancelledFormula(),
   cell: (rowId, propertyId) => Message.ClickedCell({ rowId, propertyId }),
   changeCell: text => Message.ChangedCell({ text }),
   submitCell: Message.SubmittedCell(),

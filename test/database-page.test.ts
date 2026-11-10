@@ -415,5 +415,40 @@ describe('page: databases', () => {
       assert.deepStrictEqual(names(send(fn.model, PagePage.Message.ChosePicker({ value: 'nope' }))), [])
       assert.deepInclude(argsOf(send(fn.model, PagePage.Message.ChosePicker({ value: 'countAll' })), 'ChangeDatabase'), { change: { _tag: 'SetRollup', propertyId: 'roll', relationId: '', targetId: D.TITLE, fn: 'countAll' } })
     })
+
+    it('formulas work out from other properties and read each other', () => {
+      const data = demoData(NOW)
+      const tasks = data.pages.find(page => page.id === 'demo-tasks')?.database
+      if (tasks == null) return assert.fail('no demo database')
+      const database: D.Database = { ...tasks, properties: [...tasks.properties,
+        { id: 'shout', name: 'Shout', type: { _tag: 'Formula', expression: 'concat(prop("Name"), "!")' } },
+        { id: 'twice', name: 'Twice', type: { _tag: 'Formula', expression: 'length(prop("Shout")) * 2' } },
+        { id: 'loop', name: 'Loop', type: { _tag: 'Formula', expression: 'prop("Loop")' } },
+        { id: 'bad', name: 'Bad', type: { _tag: 'Formula', expression: 'prop("Nope")' } },
+      ] }
+      const row = data.pages.find(page => page.id === 'demo-task-1')
+      if (row === undefined) return assert.fail('no demo row')
+      const [computed] = D.withComputed(database, 'demo-tasks', [row], [], [])
+      assert.deepStrictEqual(computed?.values['shout'], { _tag: 'TextValue', text: `${row.title}!` })
+      assert.deepStrictEqual(computed?.values['twice'], { _tag: 'NumberValue', value: (row.title.length + 1) * 2 })
+      assert.isUndefined(computed?.values['loop'])
+      assert.isUndefined(computed?.values['bad'])
+    })
+
+    it('the formula editor saves only formulas it can read', () => {
+      const model = related()
+      const added = { ...model, page: model.page === null || model.page.database === null ? model.page : { ...model.page, database: { ...model.page.database, properties: [...model.page.database.properties, { id: 'calc', name: 'Calc', type: { _tag: 'Formula' as const, expression: '' } }] } } }
+      const header = send(added, PagePage.Message.ClickedHeader({ propertyId: 'calc' }))
+      const opened = send(header.model, PagePage.Message.ChosePicker({ value: 'formula' }))
+      assert.deepStrictEqual(opened.model.db.formula, { propertyId: 'calc', expression: '' })
+      const broken = send(opened.model, PagePage.Message.ChangedFormula({ expression: '1 +' }))
+      assert.deepStrictEqual(names(send(broken.model, PagePage.Message.SubmittedFormula())), [])
+      assert.isNotNull(send(broken.model, PagePage.Message.SubmittedFormula()).model.db.formula)
+      const fixed = send(broken.model, PagePage.Message.ChangedFormula({ expression: '1 + 2' }))
+      const saved = send(fixed.model, PagePage.Message.SubmittedFormula())
+      assert.isNull(saved.model.db.formula)
+      assert.deepInclude(argsOf(saved, 'ChangeDatabase'), { change: { _tag: 'SetFormula', propertyId: 'calc', expression: '1 + 2' } })
+      assert.isNull(send(fixed.model, PagePage.Message.CancelledFormula()).model.db.formula)
+    })
   })
 })

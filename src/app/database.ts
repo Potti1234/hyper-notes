@@ -1,5 +1,7 @@
 import { Schema as S } from 'effect'
 
+import { type FormulaValue, MAX_FORMULA, evaluate, parse } from './formula'
+
 /* Databases: a page whose children are its rows. The page keeps the
    properties (columns) and views; each row page keeps its values by
    property id. Everything here is pure: checking values, filtering,
@@ -51,16 +53,17 @@ export const PropertyType = S.Union([
   S.TaggedStruct('Relation', { databaseId: S.String }),
   /** Works out `fn` over the `targetId` property of the rows relation `relationId` links. */
   S.TaggedStruct('Rollup', { relationId: S.String, targetId: S.String, fn: RollupFn }),
+  S.TaggedStruct('Formula', { expression: S.String }),
 ])
 export type PropertyType = typeof PropertyType.Type
 export type PropertyTag = PropertyType['_tag']
 
-export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Relation', 'Rollup']
+export const PROPERTY_TAGS: ReadonlyArray<PropertyTag> = ['Text', 'Number', 'Select', 'MultiSelect', 'Status', 'Date', 'Person', 'Checkbox', 'Url', 'Email', 'Phone', 'CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Relation', 'Rollup', 'Formula']
 export const isPropertyTag = (tag: string): tag is PropertyTag => (PROPERTY_TAGS as ReadonlyArray<string>).includes(tag)
 
 export const TYPE_LABEL: Readonly<Record<PropertyTag, string>> = {
   Text: 'Text', Number: 'Number', Select: 'Select', MultiSelect: 'Multi-select', Status: 'Status', Date: 'Date', Person: 'Person', Checkbox: 'Checkbox',
-  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID', Relation: 'Relation', Rollup: 'Rollup',
+  Url: 'URL', Email: 'Email', Phone: 'Phone', CreatedTime: 'Created time', CreatedBy: 'Created by', LastEditedTime: 'Last edited time', LastEditedBy: 'Last edited by', Id: 'ID', Relation: 'Relation', Rollup: 'Rollup', Formula: 'Formula',
 }
 
 export const Property = S.Struct({ id: S.String, name: S.String, type: PropertyType })
@@ -167,6 +170,7 @@ export const typeOf = (tag: PropertyTag, id: (prefix: string) => string, keep?: 
     case 'Id': return { _tag: 'Id', prefix: '' }
     case 'Relation': return { _tag: 'Relation', databaseId: keep?._tag === 'Relation' ? keep.databaseId : '' }
     case 'Rollup': return { _tag: 'Rollup', relationId: '', targetId: TITLE, fn: 'showOriginal' }
+    case 'Formula': return { _tag: 'Formula', expression: keep?._tag === 'Formula' ? keep.expression : '' }
     case 'Number': return { _tag: 'Number', format: 'number' }
     case 'Select': return { _tag: 'Select', options }
     case 'MultiSelect': return { _tag: 'MultiSelect', options }
@@ -213,6 +217,7 @@ export const valueOf = (property: Property, row: Row): Value | null => {
     case 'Number': case 'Id': return value._tag === 'NumberValue' ? value : null
     case 'Relation': return value._tag === 'RelationValue' && value.pageIds.length > 0 ? value : null
     case 'Rollup': return (value._tag === 'TextValue' && value.text !== '') || value._tag === 'NumberValue' ? value : null
+    case 'Formula': return (value._tag === 'TextValue' && value.text !== '') || value._tag === 'NumberValue' || value._tag === 'CheckboxValue' ? value : null
     case 'Select': case 'Status': return value._tag === 'OptionValue' && optionsOf(property).some(option => option.id === value.optionId) ? value : null
     case 'MultiSelect': {
       if (value._tag !== 'OptionsValue') return null
@@ -290,21 +295,59 @@ export const rollupValue = (database: Database, databaseId: string, property: Pr
   }
 }
 
-/** Rows with their rollups worked out, for showing, filtering and sorting. */
+const formulaValue = (value: FormulaValue): Value | null =>
+  typeof value === 'number' ? { _tag: 'NumberValue', value } : typeof value === 'boolean' ? { _tag: 'CheckboxValue', isChecked: value } : value === null || value === '' ? null : { _tag: 'TextValue', text: value }
+
+/** A row's formulas, by property id. Formulas may read each other; a loop reads as empty. */
+const formulaValues = (database: Database, row: Row, people: ReadonlyArray<Person>): ReadonlyArray<readonly [string, Value]> => {
+  const done = new Map<string, FormulaValue>()
+  const running = new Set<string>()
+  const result = (property: Property): FormulaValue => {
+    if (property.type._tag !== 'Formula' || running.has(property.id)) return null
+    if (done.has(property.id)) return done.get(property.id) ?? null
+    running.add(property.id)
+    const parsed = parse(property.type.expression)
+    const evaluated = typeof parsed === 'string' || property.type.expression.trim() === '' ? null : evaluate(parsed, lookup)
+    running.delete(property.id)
+    const value = evaluated?._tag === 'Ok' ? evaluated.value : null
+    done.set(property.id, value)
+    return value
+  }
+  const lookup = (name: string): FormulaValue | undefined => {
+    const property = database.properties.find(entry => entry.name === name)
+    if (property === undefined) return name === 'Name' ? row.title : undefined
+    const value = valueOf(property, row)
+    switch (property.type._tag) {
+      case 'Formula': return result(property)
+      case 'Checkbox': return value?._tag === 'CheckboxValue' && value.isChecked
+      case 'Number': case 'Id': case 'Rollup': return value?._tag === 'NumberValue' ? value.value : property.type._tag === 'Rollup' ? textOf(property, row, people) : null
+      default: return textOf(property, row, people)
+    }
+  }
+  return database.properties.flatMap(property => {
+    const value = property.type._tag === 'Formula' ? formulaValue(result(property)) : null
+    return value === null ? [] : [[property.id, value] as const]
+  })
+}
+
+/** Rows with their rollups and formulas worked out, for showing, filtering and sorting. */
 export const withComputed = <R extends Row>(database: Database, databaseId: string, rows: ReadonlyArray<R>, related: ReadonlyArray<Related>, people: ReadonlyArray<Person>): ReadonlyArray<R> => {
-  const computed = database.properties.filter(property => property.type._tag === 'Rollup')
+  const computed = database.properties.filter(property => property.type._tag === 'Rollup' || property.type._tag === 'Formula')
   if (computed.length === 0) return rows
   const ids = new Set(computed.map(property => property.id))
-  return rows.map(row => ({
-    ...row,
-    values: {
-      ...Object.fromEntries(Object.entries(row.values).filter(([id]) => !ids.has(id))),
-      ...Object.fromEntries(computed.flatMap(property => {
-        const value = rollupValue(database, databaseId, property, row, related, people)
-        return value === null ? [] : [[property.id, value] as const]
-      })),
-    },
-  }))
+  return rows.map(row => {
+    const rolled = {
+      ...row,
+      values: {
+        ...Object.fromEntries(Object.entries(row.values).filter(([id]) => !ids.has(id))),
+        ...Object.fromEntries(computed.flatMap(property => {
+          const value = rollupValue(database, databaseId, property, row, related, people)
+          return value === null ? [] : [[property.id, value] as const]
+        })),
+      },
+    }
+    return { ...rolled, values: { ...rolled.values, ...Object.fromEntries(formulaValues(database, rolled, people)) } }
+  })
 }
 
 const isoDay = (at: number): string => new Date(at).toISOString().slice(0, 10)
@@ -322,6 +365,12 @@ export const textOf = (property: Property | null, row: Row, people: ReadonlyArra
     case 'Rollup': {
       const value = valueOf(property, row)
       if (value?._tag === 'NumberValue') return formatNumber(value.value, isPercent(property.type.fn) ? 'percent' : 'number')
+      break
+    }
+    case 'Formula': {
+      const value = valueOf(property, row)
+      if (value?._tag === 'NumberValue') return formatNumber(value.value, 'number')
+      if (value?._tag === 'CheckboxValue') return value.isChecked ? 'true' : 'false'
       break
     }
     default: break
@@ -391,6 +440,8 @@ export const checkValue = (property: Property, value: Value, people: ReadonlyArr
       return 'IDs are numbered by themselves.'
     case 'Rollup':
       return 'Rollups are worked out by themselves.'
+    case 'Formula':
+      return 'Formulas are worked out by themselves.'
     case 'Relation':
       return value._tag === 'RelationValue' ? { _tag: 'RelationValue', pageIds: [...new Set(value.pageIds)].slice(0, MAX_OPTIONS) } : 'That value does not fit this property.'
     default:
@@ -418,7 +469,7 @@ export const operatorsFor = (property: Property | null): ReadonlyArray<Operator>
     case 'MultiSelect': case 'Person': case 'CreatedBy': case 'LastEditedBy': return ['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']
     case 'Date': case 'CreatedTime': case 'LastEditedTime': return ['is', 'before', 'after', 'isEmpty', 'isNotEmpty']
     case 'Checkbox': return ['isChecked', 'isNotChecked']
-    case 'Rollup': return ['contains', 'doesNotContain', 'is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
+    case 'Rollup': case 'Formula': return ['contains', 'doesNotContain', 'is', 'isNot', 'greaterThan', 'lessThan', 'isEmpty', 'isNotEmpty']
     default: return ['contains', 'doesNotContain', 'is', 'isNot', 'isEmpty', 'isNotEmpty']
   }
 }
@@ -448,7 +499,7 @@ export const matchesFilter = (database: Database, filter: Filter, row: Row, peop
     const has = idsOf(property, row).includes(filter.value)
     return filter.operator === 'is' || filter.operator === 'contains' ? has : !has
   }
-  if (tag === 'Number' || tag === 'Id' || (tag === 'Rollup' && property !== null && valueOf(property, row)?._tag === 'NumberValue')) {
+  if (tag === 'Number' || tag === 'Id' || ((tag === 'Rollup' || tag === 'Formula') && property !== null && valueOf(property, row)?._tag === 'NumberValue')) {
     const value = property === null ? null : valueOf(property, row)
     const number = value?._tag === 'NumberValue' ? value.value : null
     const wanted = Number(filter.value)
@@ -492,7 +543,10 @@ const sortKey = (database: Database, propertyId: string, row: Row, people: Reado
     case 'CreatedTime': return row.createdAt
     case 'LastEditedTime': return row.updatedAt
     case 'Number': case 'Id': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : null }
-    case 'Rollup': { const value = valueOf(property, row); return value?._tag === 'NumberValue' ? value.value : value?._tag === 'TextValue' ? value.text.toLowerCase() : null }
+    case 'Rollup': case 'Formula': {
+      const value = valueOf(property, row)
+      return value?._tag === 'NumberValue' ? value.value : value?._tag === 'CheckboxValue' ? (value.isChecked ? 1 : 0) : value?._tag === 'TextValue' ? value.text.toLowerCase() : null
+    }
     case 'Checkbox': { const value = valueOf(property, row); return value?._tag === 'CheckboxValue' && value.isChecked ? 1 : 0 }
     case 'Select': case 'Status': {
       // Options sort in their own order, as in Notion.
@@ -609,6 +663,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
   S.TaggedStruct('SetRelation', { propertyId: S.String, databaseId: S.String }),
+  S.TaggedStruct('SetFormula', { propertyId: S.String, expression: S.String }),
   S.TaggedStruct('SetRollup', { propertyId: S.String, relationId: S.String, targetId: S.String, fn: RollupFn }),
   S.TaggedStruct('SetWidth', { viewId: S.String, propertyId: S.String, width: S.Number }),
   S.TaggedStruct('SetGroupHidden', { viewId: S.String, key: S.String, isHidden: S.Boolean }),
@@ -762,6 +817,12 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
       const type: PropertyType = { _tag: 'Relation', databaseId: change.databaseId.slice(0, 200) }
       return { database: { ...database, properties: database.properties.map(entry => (entry.id === property.id ? { ...entry, type } : entry)) }, addedId: null }
     }
+    case 'SetFormula':
+      return withProperty(change.propertyId, property => {
+        if (property.type._tag !== 'Formula') return 'That property is not a formula.'
+        const parsed = change.expression.trim() === '' ? null : parse(change.expression)
+        return typeof parsed === 'string' ? parsed : { ...property, type: { _tag: 'Formula', expression: change.expression.slice(0, MAX_FORMULA) } }
+      })
     case 'SetRollup':
       return withProperty(change.propertyId, property => {
         if (property.type._tag !== 'Rollup') return 'That property is not a rollup.'

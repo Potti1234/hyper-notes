@@ -207,6 +207,12 @@ describe('databases: workspace operations', () => {
       assert.strictEqual(notRelation.reason, 'Pick a relation of this database.')
       const rolled = yield* workspace.changeDatabase(page.id, { _tag: 'SetRollup', propertyId: rollupId, relationId: propertyId, targetId: D.TITLE, fn: 'countAll' }, 'avery')
       assert.isNull(rolled)
+      const formulaId = (yield* workspace.changeDatabase(page.id, { _tag: 'AddProperty', tag: 'Formula', name: '' }, 'avery'))!
+      const broken = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetFormula', propertyId: formulaId, expression: 'if(' }, 'avery'))
+      assert.strictEqual(broken.reason, 'The formula ends too early')
+      const notFormula = yield* Effect.flip(workspace.changeDatabase(page.id, { _tag: 'SetFormula', propertyId: rollupId, expression: '1' }, 'avery'))
+      assert.strictEqual(notFormula.reason, 'That property is not a formula.')
+      yield* workspace.changeDatabase(page.id, { _tag: 'SetFormula', propertyId: formulaId, expression: 'prop("Name") + "!"' }, 'avery')
     })))
 
   it.effect('pages with content, locked or private pages of others cannot change', () =>

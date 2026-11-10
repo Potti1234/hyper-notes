@@ -10,6 +10,7 @@ import { input } from '@/ui/input'
 import { link } from '@/ui/link'
 
 import * as D from '../database'
+import { parse as parseFormula } from '../formula'
 import { DB_GRID, DB_VIEW, box, optionChip } from '../view/design'
 import { pageIcon } from '../view/icons'
 
@@ -64,15 +65,18 @@ export const DatabaseUi = S.Struct({
   dragging: S.NullOr(S.String),
   dropOn: S.NullOr(S.String),
   renaming: S.NullOr(S.Struct({ propertyId: S.String, name: S.String })),
+  /** A formula being written in the formula editor. */
+  formula: S.NullOr(S.Struct({ propertyId: S.String, expression: S.String })),
   /** The row open in a side or center peek. */
   peek: S.NullOr(S.String),
 })
 export type DatabaseUi = typeof DatabaseUi.Type
 
-export const emptyUi: DatabaseUi = { viewId: null, query: null, editing: null, datePick: null, month: null, dragging: null, dropOn: null, renaming: null, peek: null }
+export const emptyUi: DatabaseUi = { viewId: null, query: null, editing: null, datePick: null, month: null, dragging: null, dropOn: null, renaming: null, formula: null, peek: null }
 
 export const CELL_INPUT_ID = 'cell-input'
 export const PROPERTY_NAME_ID = 'property-name'
+export const FORMULA_INPUT_ID = 'formula-input'
 export const DB_SEARCH_ID = 'database-search'
 
 export const PEEK_SCOPE = 'peek-'
@@ -103,7 +107,7 @@ export const isTyped = (property: D.Property | null): boolean =>
 
 export const isPicked = (property: D.Property): boolean => ['Select', 'MultiSelect', 'Status', 'Person'].includes(property.type._tag)
 
-export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Rollup'].includes(property.type._tag)
+export const isComputed = (property: D.Property): boolean => ['CreatedTime', 'CreatedBy', 'LastEditedTime', 'LastEditedBy', 'Id', 'Rollup', 'Formula'].includes(property.type._tag)
 
 /** What a typed cell starts with when it opens. */
 export const draftOf = (property: D.Property | null, row: RowEntry): string => {
@@ -113,7 +117,7 @@ export const draftOf = (property: D.Property | null, row: RowEntry): string => {
 }
 
 export const TYPE_ICON: Readonly<Record<D.PropertyTag | 'Title', string>> = {
-  Title: 'type', Id: 'list-ordered', Relation: 'arrow-up-right', Rollup: 'calculator', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
+  Title: 'type', Id: 'list-ordered', Relation: 'arrow-up-right', Rollup: 'calculator', Formula: 'sigma', Text: 'pilcrow', Number: 'chart-bar-stacked', Select: 'circle-dot', MultiSelect: 'tags', Status: 'loader-circle', Date: 'calendar', Person: 'users',
   Checkbox: 'square-check', Url: 'link', Email: 'at-sign', Phone: 'pin', CreatedTime: 'clock', CreatedBy: 'user', LastEditedTime: 'clock', LastEditedBy: 'user',
 }
 
@@ -129,6 +133,9 @@ export type DatabaseMessages<Msg> = Readonly<{
   addProperty: Msg
   propertyName: (name: string) => Msg
   submitPropertyName: Msg
+  formula: (expression: string) => Msg
+  submitFormula: Msg
+  cancelFormula: Msg
   cell: (rowId: string, propertyId: string) => Msg
   changeCell: (text: string) => Msg
   submitCell: Msg
@@ -540,9 +547,28 @@ export const databaseView = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>
             : box({ class: 'w-48', children: [input({ id: DB_SEARCH_ID, value: ui.query, placeholder: 'Type to search…', ariaLabel: 'Search this database', autocomplete: 'off', variant: 'compact', onInput: msgs.query }, h)] }, h),
           ...(props.isEditable ? [button({ variant: 'default', size: 'compact', id: 'database-new', onClick: msgs.newRow, children: ['New'] }, h)] : []),
         ] }, h),
+      ...(ui.formula === null || !props.isEditable ? [] : [formulaEditor(ui.formula, props, h)]),
       ...(view === null || (view.filters.length === 0 && view.sorts.length === 0) ? [] : [filterBar(view, props, h)]),
       ...(view === null ? [] : [layoutView(view, rows, behind, h)]),
       ...(view === null || peeked === undefined ? [] : peekView(D.openInOf(view) === 'center' ? 'center' : 'side', peeked, props, h)),
+    ] }, h)
+}
+
+/** Writes a formula property's expression, saying why it can't be read yet. */
+const formulaEditor = <Msg>(editing: Readonly<{ propertyId: string; expression: string }>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
+  const name = D.propertyOf(props.database, editing.propertyId)?.name ?? 'Formula'
+  const parsed = editing.expression.trim() === '' ? null : parseFormula(editing.expression)
+  return box({ as: 'form', class: 'mt-2 flex flex-col gap-1.5 rounded-md border p-2', attributes: [h.Id('formula-editor'), h.AriaLabel(`Formula for ${name}`), h.OnSubmit(props.msgs.submitFormula),
+      h.OnKeyDownPreventDefault(key => (key === 'Escape' ? Option.some(props.msgs.cancelFormula) : Option.none()))], children: [
+      box({ as: 'span', class: 'flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground', children: [Icon.icon('sigma', { class: 'size-3.5' }, h), name] }, h),
+      box({ class: 'flex items-center gap-1', children: [
+          box({ class: 'min-w-0 flex-1', children: [input({ id: FORMULA_INPUT_ID, value: editing.expression, placeholder: 'prop("Name") + "!"', ariaLabel: 'Formula', autocomplete: 'off', variant: 'compact', onInput: props.msgs.formula }, h)] }, h),
+          button({ size: 'compact', id: 'formula-save', type: 'submit', isDisabled: typeof parsed === 'string', children: ['Done'] }, h),
+          button({ variant: 'ghost', size: 'compact', id: 'formula-cancel', onClick: props.msgs.cancelFormula, children: ['Cancel'] }, h),
+        ] }, h),
+      typeof parsed === 'string'
+        ? box({ as: 'span', class: 'text-[12px] text-destructive', attributes: [h.Id('formula-error'), h.Role('status')], children: [parsed] }, h)
+        : box({ as: 'span', class: 'text-[12px] text-muted-foreground', children: ['prop("Name"), if, ifs, concat, length, contains, replace, round, min, max, sum, empty, and, or, not'] }, h),
     ] }, h)
 }
 

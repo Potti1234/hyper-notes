@@ -509,6 +509,25 @@ try {
   await choose(avery.page, 'Count all')
   check('a rollup counts linked rows', await until(morgan.page, prop => document.querySelector(`#cell-demo-task-1-${prop}`)?.textContent === '1', rollup))
 
+  // FORMULAS: a formula works out from the row's properties.
+  await avery.page.locator('#add-property').click()
+  await choose(avery.page, 'Formula')
+  await until(avery.page, () => [...document.querySelectorAll('#database-table [role="columnheader"]')].some(head => head.textContent === 'Formula'))
+  const formula = await propertyId(avery.page, 'Formula')
+  await avery.page.keyboard.press('Escape')
+  await until(avery.page, () => document.querySelector('#picker') === null)
+  await avery.page.locator(`#header-${formula}`).click()
+  await choose(avery.page, 'Edit formula')
+  await until(avery.page, () => document.activeElement?.id === 'formula-input')
+  await avery.page.keyboard.type('concat(prop("Name"), ')
+  check('an unfinished formula says why it cannot be read', await until(avery.page, () => document.querySelector('#formula-error') !== null && document.querySelector('#formula-save')?.disabled === true))
+  await avery.page.keyboard.type('"!")')
+  await until(avery.page, () => document.querySelector('#formula-error') === null)
+  await avery.page.keyboard.press('Enter')
+  const rowTitle = await avery.page.locator('#cell-demo-task-1-title').textContent()
+  check('a formula shows its result for everyone', await until(morgan.page, ([prop, title]) => document.querySelector(`#cell-demo-task-1-${prop}`)?.textContent === `${title}!`, [formula, rowTitle]))
+  check('saving closes the formula editor', await until(avery.page, () => document.querySelector('#formula-editor') === null))
+
   // COLUMN WIDTHS: dragging a header's edge resizes the column for everyone.
   // Adding a property scrolls the table to its new column; bring the title back into view.
   await avery.page.evaluate(() => { document.querySelector('#database-table').scrollLeft = 0 })
@@ -522,7 +541,7 @@ try {
 
   // ROW PEEKS: side and center peeks edit a row over its database; full page links to it.
   await avery.page.locator('#open-demo-task-2').click()
-  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 7 && document.activeElement?.id === 'peek-close'))
+  check('Open shows the row in a side peek', await until(avery.page, () => document.querySelector('#row-peek')?.getAttribute('data-peek') === 'side' && document.querySelectorAll('#row-peek [data-property]').length === 8 && document.activeElement?.id === 'peek-close'))
   await avery.page.locator('#peek-cell-demo-task-2-demo-status').click()
   await until(avery.page, () => document.querySelector('#picker[data-field="cell"]') !== null)
   await choose(avery.page, 'Not started')
