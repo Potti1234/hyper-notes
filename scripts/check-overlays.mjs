@@ -111,6 +111,8 @@ try {
       ['#header-demo-tags', 'the Tags header menu'],
       ['#add-property', 'the + property menu'],
       ['#add-view', 'the + view menu'],
+      ['#database-filter', 'the Filter menu'],
+      ['#database-sort', 'the Sort menu'],
       ['#view-demo-tasks-table', 'the view menu'],
       ['#cell-demo-task-1-demo-status', 'a status cell menu'],
       ['#cell-demo-task-3-demo-tags', 'a multi-select cell menu, last row'],

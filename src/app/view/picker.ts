@@ -21,7 +21,7 @@ import { box, optionRow } from '@/app/view/design'
    crease's `command` is the visual source (classes, spacing). It is not used
    directly: on the server its Enter key does nothing (EXPERIMENT.md, F2). */
 
-export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options', 'property', 'propertyType', 'addProperty', 'cell', 'cells', 'view', 'addView'])
+export const PickerField = S.Literals(['page', 'move', 'search', 'icon', 'cover', 'options', 'property', 'propertyType', 'addProperty', 'cell', 'cells', 'view', 'addView', 'addFilter', 'filter', 'sorts'])
 export type PickerField = typeof PickerField.Type
 
 export const Picker = S.Struct({
@@ -66,6 +66,9 @@ export const placeholder: Readonly<Record<PickerField, string>> = {
   cells: 'Search for an option…',
   view: 'Type a new name…',
   addView: 'Search layouts…',
+  addFilter: 'Filter by…',
+  filter: 'Type a value…',
+  sorts: 'Sort by…',
 }
 
 /** Index of the first checked item: where a single-choice picker starts. */

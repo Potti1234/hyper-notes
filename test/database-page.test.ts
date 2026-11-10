@@ -2,7 +2,7 @@ import { assert, describe, it } from '@effect/vitest'
 
 import type { Page } from '@/app/domain'
 import type * as D from '@/app/database'
-import { isDay, isMonth, monthDays, shiftMonth } from '@/app/page/database-view'
+import { filterLabel, isDay, isMonth, monthDays, shiftMonth } from '@/app/page/database-view'
 import * as PagePage from '@/app/page/page'
 import { DEMO_MEMBERS, demoData } from '@/app/seed'
 
@@ -228,6 +228,72 @@ describe('page: databases', () => {
       assert.deepStrictEqual([monthDays('2027-02')[0], monthDays('2027-02').length], ['2027-01-31', 35])
       assert.deepStrictEqual([shiftMonth('2026-01', -1), shiftMonth('2026-12', 1)], ['2025-12', '2027-01'])
       assert.deepStrictEqual([isDay('2026-02-28'), isDay('2026-02-30'), isMonth('2026-00')], [true, false, false])
+    })
+  })
+
+  describe('filters and sorts', () => {
+    const tasks = (view: Partial<D.DatabaseView>) => {
+      const data = demoData(NOW)
+      const pages = data.pages.map(page => page.id === 'demo-tasks' && page.database !== null
+        ? { ...page, database: { ...page.database, views: page.database.views.map(entry => ({ ...entry, ...view })) } }
+        : page)
+      const slice = PagePage.sliceOf({ version: 0, members: data.members, pages, favorites: data.favorites, expanded: data.expanded, comments: data.comments, versions: data.versions }, 'demo-tasks', 'avery', NOW)
+      return PagePage.init({ ...slice, me: avery, view: 'page', pageId: 'demo-tasks' }).model
+    }
+    const statusFilter = { id: 'f1', propertyId: 'demo-status', operator: 'is' as const, value: '' }
+
+    it('Filter picks a property, then opens the new filter', () => {
+      const picked = send(model('demo-tasks'), PagePage.Message.ClickedAddFilter(), PagePage.Message.ChosePicker({ value: 'demo-status' }))
+      assert.deepInclude(argsOf(picked, 'ChangeDatabase'), { change: { _tag: 'AddFilter', viewId: 'demo-tasks-table', propertyId: 'demo-status' } })
+      const opened = send(picked.model, PagePage.Message.SucceededDbChange({ addedId: 'f1', change: { _tag: 'AddFilter', viewId: 'demo-tasks-table', propertyId: 'demo-status' } }))
+      assert.deepInclude(opened.model.picker, { field: 'filter', pageId: 'f1' })
+    })
+
+    it('a filter takes an option and a condition, keeping its menu open', () => {
+      const open = send(tasks({ filters: [statusFilter] }), PagePage.Message.ClickedFilter({ filterId: 'f1' }))
+      assert.deepInclude(open.model.picker, { field: 'filter', pageId: 'f1' })
+      const valued = send(open.model, PagePage.Message.ChosePicker({ value: 'value:demo-done' }))
+      assert.deepInclude(argsOf(valued, 'ChangeDatabase'), { change: { _tag: 'SetFilter', viewId: 'demo-tasks-table', filterId: 'f1', operator: 'is', value: 'demo-done' } })
+      assert.isNotNull(valued.model.picker)
+      assert.deepInclude(argsOf(send(open.model, PagePage.Message.ChosePicker({ value: 'op:isEmpty' })), 'ChangeDatabase'), { change: { _tag: 'SetFilter', viewId: 'demo-tasks-table', filterId: 'f1', operator: 'isEmpty', value: '' } })
+      assert.deepStrictEqual(names(send(open.model, PagePage.Message.ChosePicker({ value: 'value:nope' }))), [])
+      assert.deepStrictEqual(names(send(open.model, PagePage.Message.ChosePicker({ value: 'op:greaterThan' }))), [], 'not a status condition')
+      assert.deepInclude(argsOf(send(open.model, PagePage.Message.ChosePicker({ value: 'remove' })), 'ChangeDatabase'), { change: { _tag: 'RemoveFilter', viewId: 'demo-tasks-table', filterId: 'f1' } })
+      assert.deepStrictEqual(names(send(tasks({}), PagePage.Message.ClickedFilter({ filterId: 'f1' }))), [])
+    })
+
+    it('a text filter takes what you type; a date filter only a date', () => {
+      const name = send(tasks({ filters: [{ id: 'f2', propertyId: 'title', operator: 'contains', value: '' }] }), PagePage.Message.ClickedFilter({ filterId: 'f2' }), PagePage.Message.ChangedPickerQuery({ query: 'slash' }), PagePage.Message.ChosePicker({ value: 'set' }))
+      assert.deepInclude(argsOf(name, 'ChangeDatabase'), { change: { _tag: 'SetFilter', viewId: 'demo-tasks-table', filterId: 'f2', operator: 'contains', value: 'slash' } })
+      const due = tasks({ filters: [{ id: 'f3', propertyId: 'demo-due', operator: 'before', value: '' }] })
+      const bad = send(due, PagePage.Message.ClickedFilter({ filterId: 'f3' }), PagePage.Message.ChangedPickerQuery({ query: 'tomorrow' }), PagePage.Message.ChosePicker({ value: 'set' }))
+      assert.deepStrictEqual([names(bad), bad.model.notice], [[], 'Enter a date as YYYY-MM-DD.'])
+      const good = send(due, PagePage.Message.ClickedFilter({ filterId: 'f3' }), PagePage.Message.ChangedPickerQuery({ query: '2026-12-01' }), PagePage.Message.ChosePicker({ value: 'set' }))
+      assert.deepInclude(argsOf(good, 'ChangeDatabase'), { change: { _tag: 'SetFilter', viewId: 'demo-tasks-table', filterId: 'f3', operator: 'before', value: '2026-12-01' } })
+    })
+
+    it('the sort menu adds, flips, reorders and clears sorts', () => {
+      const sorted = tasks({ sorts: [{ propertyId: 'demo-due', isDescending: false }, { propertyId: 'title', isDescending: true }] })
+      const open = send(sorted, PagePage.Message.ClickedSorts())
+      const change = (value: string) => commands(send(open.model, PagePage.Message.ChosePicker({ value }))).map(([, args]) => (args as { change: D.DatabaseChange }).change)
+      assert.deepStrictEqual(change('up:title'), [{ _tag: 'MoveSort', viewId: 'demo-tasks-table', propertyId: 'title' }])
+      assert.deepStrictEqual(change('flip:demo-due'), [{ _tag: 'SetSort', viewId: 'demo-tasks-table', propertyId: 'demo-due', isDescending: true }])
+      assert.deepStrictEqual(change('add:demo-tags'), [{ _tag: 'SetSort', viewId: 'demo-tasks-table', propertyId: 'demo-tags', isDescending: false }])
+      assert.deepStrictEqual(change('add:demo-due'), [], 'already sorted')
+      assert.deepStrictEqual(change('clear').map(entry => entry._tag), ['SetSort', 'SetSort'])
+      assert.deepStrictEqual(change('add:nope'), [])
+    })
+
+    it('a header menu adds a filter on its property', () => {
+      const header = send(model('demo-tasks'), PagePage.Message.ClickedHeader({ propertyId: 'demo-tags' }), PagePage.Message.ChosePicker({ value: 'filter' }))
+      assert.deepInclude(argsOf(header, 'ChangeDatabase'), { change: { _tag: 'AddFilter', viewId: 'demo-tasks-table', propertyId: 'demo-tags' } })
+    })
+
+    it('filter chips read like Notion', () => {
+      const database = tasks({}).page!.database!
+      assert.strictEqual(filterLabel(database, { ...statusFilter, value: 'demo-done' }, []), 'Status: Done')
+      assert.strictEqual(filterLabel(database, { id: 'x', propertyId: 'title', operator: 'doesNotContain', value: 'road' }, []), 'Name: does not contain road')
+      assert.strictEqual(filterLabel(database, { id: 'x', propertyId: 'demo-due', operator: 'isEmpty', value: '' }, []), 'Due is empty')
     })
   })
 })

@@ -67,6 +67,9 @@ export const cellAnchor = (rowId: string, propertyId: string) => `--cell-${rowId
 export const viewAnchor = (viewId: string) => `--view-${viewId}`
 export const ADD_VIEW_ANCHOR = '--add-view'
 export const ADD_PROPERTY_ANCHOR = '--add-property'
+export const FILTER_ANCHOR = '--add-filter'
+export const SORT_ANCHOR = '--sorts'
+export const filterAnchor = (filterId: string) => `--filter-${filterId}`
 
 /** Picker targets carry a row and a property as `row|property`. */
 export const cellTarget = (rowId: string, propertyId: string) => `${rowId}|${propertyId}`
@@ -131,6 +134,9 @@ export type DatabaseMessages<Msg> = Readonly<{
   enterDrop: (key: string) => Msg
   drop: (key: string) => Msg
   month: (month: string) => Msg
+  addFilter: Msg
+  filter: (filterId: string) => Msg
+  sorts: Msg
 }>
 
 export type CellContext<Msg> = Readonly<{
@@ -240,6 +246,51 @@ const headerCell = <Msg>(property: D.Property | null, props: DatabaseProps<Msg>,
     ] }, h)
 }
 
+/** Rows under a header per group when the view is grouped. A row with several
+ *  tags is listed under its first one only, so its cells keep unique ids. */
+const grouped = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>, render: (row: RowEntry) => Html): ReadonlyArray<Html> => {
+  const property = view.groupBy === null ? null : D.propertyOf(props.database, view.groupBy)
+  if (property === null || !D.canGroupBy(property)) return rows.map(render)
+  const seen = new Set<string>()
+  return D.groupRows(property, rows, props.people).flatMap(group => {
+    const own = group.rows.filter(row => !seen.has(row.id))
+    for (const row of own) seen.add(row.id)
+    return [
+      box({ class: DB_VIEW.group, attributes: [h.DataAttribute('group', group.key)], children: [
+          optionChip({ color: group.color, isStatus: property.type._tag === 'Status', children: [group.label] }, h),
+          box({ as: 'span', class: 'text-muted-foreground', attributes: [h.DataAttribute('count', group.key)], children: [String(own.length)] }, h),
+        ] }, h),
+      ...own.map(render),
+    ]
+  })
+}
+
+/** How a filter chip reads: "Status: Done", "Name: contains road", "Due is empty". */
+export const filterLabel = (database: D.Database, filter: D.Filter, people: ReadonlyArray<D.Person>): string => {
+  const property = filter.propertyId === D.TITLE ? null : D.propertyOf(database, filter.propertyId)
+  const name = property?.name ?? 'Name'
+  if (D.isUnary(filter.operator)) return `${name} ${D.OPERATOR_LABEL[filter.operator]}`
+  if (filter.value === '') return name
+  const value = D.optionsOf(property ?? { id: '', name: '', type: { _tag: 'Text' } }).find(option => option.id === filter.value)?.name
+    ?? people.find(member => member.id === filter.value)?.name
+    ?? (property?.type._tag === 'Date' ? formatDay(filter.value) : filter.value)
+  return filter.operator === 'is' || filter.operator === 'contains' ? `${name}: ${value}` : `${name}: ${D.OPERATOR_LABEL[filter.operator]} ${value}`
+}
+
+const filterBar = <Msg>(view: D.DatabaseView, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
+  const nameOf = (propertyId: string) => (propertyId === D.TITLE ? 'Name' : (D.propertyOf(props.database, propertyId)?.name ?? ''))
+  const first = view.sorts[0]
+  return box({ class: 'flex flex-wrap items-center gap-1 py-1.5', attributes: [h.Id('database-filters')], children: [
+      ...(first === undefined ? [] : [box({ class: 'flex', children: [
+          button({ variant: 'outline', size: 'compact', id: 'sort-chip', isDisabled: !props.isEditable, onClick: props.msgs.sorts, children: [Icon.icon('arrow-up-down', { class: 'size-3.5' }, h), view.sorts.length === 1 ? nameOf(first.propertyId) : `${view.sorts.length} sorts`] }, h),
+        ] }, h)]),
+      ...view.filters.map(filter => box({ class: 'flex', style: { anchorName: filterAnchor(filter.id) }, children: [
+          button({ variant: 'outline', size: 'compact', id: `filter-${filter.id}`, isDisabled: !props.isEditable, onClick: props.msgs.filter(filter.id), children: [filterLabel(props.database, filter, props.people)] }, h),
+        ] }, h)),
+      ...(props.isEditable ? [button({ variant: 'quiet', size: 'compact', id: 'add-filter', onClick: props.msgs.addFilter, children: [Icon.plus({ class: 'size-3.5' }, h), 'Add filter'] }, h)] : []),
+    ] }, h)
+}
+
 const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html => {
   const shownProperties = props.database.properties.filter(property => !view.hidden.includes(property.id))
   return box({ class: DB_GRID.scroll, attributes: [h.Id('database-table'), h.DataAttribute('layout', 'table')], children: [
@@ -251,7 +302,7 @@ const tableView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
                   button({ variant: 'ghost', size: 'icon-sm', id: 'add-property', ariaLabel: 'Add a property', title: 'Add a property', isDisabled: !props.isEditable, onClick: props.msgs.addProperty, children: [Icon.plus({ class: 'size-4' }, h)] }, h),
                 ] }, h),
             ] }, h),
-          ...rows.map(row => box({ class: DB_GRID.row, attributes: [h.Role('row'), h.DataAttribute('row', row.id)], children: [
+          ...grouped(view, rows, props, h, row => box({ class: DB_GRID.row, attributes: [h.Role('row'), h.DataAttribute('row', row.id)], children: [
               box({ class: cn(DB_GRID.cell, DB_GRID.title), attributes: [h.Role('cell')], children: [cellView(null, row, props, h)] }, h),
               ...shownProperties.map(property => box({ class: DB_GRID.cell, attributes: [h.Role('cell')], children: [cellView(property, row, props, h)] }, h)),
               box({ class: cn(DB_GRID.cell, DB_GRID.add), children: [] }, h),
@@ -346,7 +397,7 @@ const boardView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, pro
 
 const listView = <Msg>(view: D.DatabaseView, rows: ReadonlyArray<RowEntry>, props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>): Html =>
   box({ class: 'flex flex-col', attributes: [h.Id('database-list'), h.DataAttribute('layout', 'list')], children: [
-      ...rows.map(row => box({ class: DB_VIEW.line, attributes: [h.DataAttribute('row', row.id)], children: [
+      ...grouped(view, rows, props, h, row => box({ class: DB_VIEW.line, attributes: [h.DataAttribute('row', row.id)], children: [
           box({ class: 'min-w-0 flex-1', children: [titleLink(row, h)] }, h),
           box({ class: 'flex shrink-0 items-center gap-3', children: values(shownOn(view, props.database), row, props.people, h) }, h),
         ] }, h)),
@@ -416,11 +467,16 @@ export const databaseView = <Msg>(props: DatabaseProps<Msg>, h: HtmlBuilder<Msg>
                   button({ variant: 'ghost', size: 'icon-sm', id: 'add-view', ariaLabel: 'Add a view', title: 'Add a view', onClick: msgs.addView, children: [Icon.plus({ class: 'size-4' }, h)] }, h),
                 ] }, h)] : []),
             ] }, h),
+          ...(props.isEditable ? [
+              box({ class: 'flex', style: { anchorName: FILTER_ANCHOR }, children: [button({ variant: 'quiet', size: 'compact', id: 'database-filter', onClick: msgs.addFilter, children: [Icon.icon('list-filter', { class: 'size-4' }, h), 'Filter'] }, h)] }, h),
+              box({ class: 'flex', style: { anchorName: SORT_ANCHOR }, children: [button({ variant: 'quiet', size: 'compact', id: 'database-sort', onClick: msgs.sorts, children: [Icon.icon('arrow-up-down', { class: 'size-4' }, h), 'Sort'] }, h)] }, h),
+            ] : []),
           ui.query === null
             ? button({ variant: 'ghost', size: 'icon-sm', id: 'database-search-toggle', ariaLabel: 'Search this database', title: 'Search', onClick: msgs.search, children: [Icon.search({ class: 'size-4' }, h)] }, h)
             : box({ class: 'w-48', children: [input({ id: DB_SEARCH_ID, value: ui.query, placeholder: 'Type to search…', ariaLabel: 'Search this database', autocomplete: 'off', variant: 'compact', onInput: msgs.query }, h)] }, h),
           ...(props.isEditable ? [button({ variant: 'default', size: 'compact', id: 'database-new', onClick: msgs.newRow, children: ['New'] }, h)] : []),
         ] }, h),
+      ...(view === null || (view.filters.length === 0 && view.sorts.length === 0) ? [] : [filterBar(view, props, h)]),
       ...(view === null ? [] : [layoutView(view, rows, props, h)]),
     ] }, h)
 }

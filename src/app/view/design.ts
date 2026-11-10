@@ -68,6 +68,7 @@ export const DB_VIEW = {
   dayAdd: 'nb-db-day-add',
   today: 'nb-db-today',
   event: 'nb-db-event',
+  group: 'nb-db-group',
 } as const
 
 export const DB_GRID = {

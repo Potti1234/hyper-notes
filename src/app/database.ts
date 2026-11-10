@@ -468,6 +468,7 @@ export const DatabaseChange = S.Union([
   S.TaggedStruct('SetFilter', { viewId: S.String, filterId: S.String, operator: Operator, value: S.String }),
   S.TaggedStruct('RemoveFilter', { viewId: S.String, filterId: S.String }),
   S.TaggedStruct('SetSort', { viewId: S.String, propertyId: S.String, isDescending: S.NullOr(S.Boolean) }),
+  S.TaggedStruct('MoveSort', { viewId: S.String, propertyId: S.String }),
   S.TaggedStruct('SetGroupBy', { viewId: S.String, propertyId: S.NullOr(S.String) }),
   S.TaggedStruct('SetDateBy', { viewId: S.String, propertyId: S.String }),
   S.TaggedStruct('SetHidden', { viewId: S.String, propertyId: S.String, isHidden: S.Boolean }),
@@ -608,6 +609,14 @@ export const applyChange = (database: Database, change: DatabaseChange, id: (pre
         const existing = view.sorts.findIndex(sort => sort.propertyId === change.propertyId)
         const sort = { propertyId: change.propertyId, isDescending: change.isDescending }
         return { ...view, sorts: existing < 0 ? [...others, sort] : view.sorts.map(entry => (entry.propertyId === change.propertyId ? sort : entry)) }
+      })
+    case 'MoveSort':
+      return withView(change.viewId, view => {
+        const index = view.sorts.findIndex(sort => sort.propertyId === change.propertyId)
+        if (index < 0) return 'That sort is gone.'
+        const sorts = [...view.sorts]
+        if (index > 0) [sorts[index - 1], sorts[index]] = [view.sorts[index]!, view.sorts[index - 1]!]
+        return { ...view, sorts }
       })
     case 'SetGroupBy': {
       const property = change.propertyId === null ? null : propertyOf(database, change.propertyId)

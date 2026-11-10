@@ -25,7 +25,7 @@ import { Workspace, type WorkspaceState } from '../store'
 import { box, optionRow, pageRoot } from '../view/design'
 import { COVERS, COVER_ANCHOR, ICON_ANCHOR, OPTIONS_ANCHOR, PageChange, type HeaderActions, coverView, fontClass, iconAndControls, isCoverName, isCoverUrl, patchOf, pickCover } from './header'
 import { avatar, pageIcon } from '../view/icons'
-import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
+import { ADD_PROPERTY_ANCHOR, ADD_VIEW_ANCHOR, FILTER_ANCHOR, SORT_ANCHOR, filterAnchor, CELL_INPUT_ID, DB_SEARCH_ID, DatabaseUi, type DatabaseMessages, PROPERTY_NAME_ID, ParentDatabase, RowEntry, activeView, cellAnchor, cellTarget, databaseView, draftOf, emptyUi, headerAnchor, isComputed, isDay, isMonth, isTyped, parseTarget, propertiesView, viewAnchor } from './database-view'
 import { PICKER_INPUT_ID, Picker, type PickerItem, checkedIndex, keyAction, open as openPicker, pickerView } from '../view/picker'
 import { Nav, navOf, sameNav, sidebar } from '../view/shell'
 import { SearchHit, searchPages } from '../search'
@@ -212,6 +212,9 @@ export const Message = defineMessageUnion({
   EnteredDropTarget: { key: S.String },
   DroppedCard: { key: S.String },
   ChangedCalendarMonth: { month: S.String },
+  ClickedAddFilter: {},
+  ClickedFilter: { filterId: S.String },
+  ClickedSorts: {},
   SucceededDbChange: { addedId: S.NullOr(S.String), change: D.DatabaseChange },
   SucceededAddRow: { rowId: S.String },
   SucceededCreate: { id: S.String },
@@ -285,6 +288,9 @@ export const ClientMessage = S.Union([
   Message.EnteredDropTarget,
   Message.DroppedCard,
   Message.ChangedCalendarMonth,
+  Message.ClickedAddFilter,
+  Message.ClickedFilter,
+  Message.ClickedSorts,
 ])
 export type ClientMessage = typeof ClientMessage.Type
 
@@ -632,6 +638,14 @@ export const pickerItems = (model: Model): ReadonlyArray<PickerItem> => {
         { value: 'duplicate', label: 'Duplicate view' },
         ...((model.page?.database?.views.length ?? 0) > 1 ? [{ value: 'delete', label: 'Delete view' }] : []),
       ]
+    case 'addFilter': {
+      const properties = editableDatabase(model)?.database.properties ?? []
+      return [{ value: D.TITLE, label: 'Name', group: 'Filter by' }, ...properties.map(property => ({ value: property.id, label: property.name, group: 'Filter by' }))]
+    }
+    case 'filter':
+      return filterItems(model, picker.pageId, picker.query)
+    case 'sorts':
+      return sortItems(model)
     case 'addView':
       return D.LAYOUTS.map(layout => ({ value: `layout:${layout}`, label: D.LAYOUT_LABEL[layout], group: 'Layout' }))
     case 'options': {
@@ -729,6 +743,9 @@ const choose = (model: Model, picker: Picker, value: string): UpdateReturn => {
     case 'addProperty':
     case 'view':
     case 'addView':
+    case 'addFilter':
+    case 'filter':
+    case 'sorts':
       return chooseDatabase(model, picker, value)
     case 'move': {
       if (value === 'section:workspace' || value === 'section:private') return { model: closed, commands: [MovePage({ pageId: picker.pageId, parentId: null, section: value === 'section:private' ? 'private' : 'workspace', actorId })] }
@@ -874,6 +891,7 @@ const propertyItems = (model: Model, propertyId: string): ReadonlyArray<PickerIt
     { value: 'sort:asc', label: 'Sort ascending', group: 'Sort', isChecked: sort !== undefined && !sort.isDescending },
     { value: 'sort:desc', label: 'Sort descending', group: 'Sort', isChecked: sort?.isDescending === true },
     ...(sort === undefined ? [] : [{ value: 'sort:none', label: 'Remove sort', group: 'Sort' }]),
+    { value: 'filter', label: 'Filter', group: 'View' },
   ]
   const property = page?.database.properties.find(entry => entry.id === propertyId)
   if (property === undefined) return sorts
@@ -921,6 +939,108 @@ const chooseCell = (model: Model, picker: Picker, value: string): UpdateReturn =
   return setValue(next, cell, ids.length === 0 ? null : cell.property.type._tag === 'Person' ? { _tag: 'PeopleValue', memberIds: ids } : { _tag: 'OptionsValue', optionIds: ids })
 }
 
+/** The open filter of the active view, with its property (null: the title). */
+const filterAt = (model: Model, filterId: string) => {
+  const page = editableDatabase(model)
+  const view = page === null ? null : activeView(page.database, model.db)
+  const filter = view?.filters.find(entry => entry.id === filterId)
+  if (page === null || view === null || filter === undefined) return null
+  const property = filter.propertyId === D.TITLE ? null : D.propertyOf(page.database, filter.propertyId)
+  return filter.propertyId !== D.TITLE && property === null ? null : { page, view, filter, property }
+}
+
+/** Ids a filter on `property` can pick from: its options or the people. */
+const pickableOf = (model: Model, property: D.Property | null): ReadonlyArray<Readonly<{ id: string; name: string }>> | null => {
+  switch (property?.type._tag) {
+    case 'Select': case 'Status': case 'MultiSelect': return D.optionsOf(property)
+    case 'Person': case 'CreatedBy': case 'LastEditedBy': return model.people
+    default: return null
+  }
+}
+
+const filterItems = (model: Model, filterId: string, query: string): ReadonlyArray<PickerItem> => {
+  const at = filterAt(model, filterId)
+  if (at === null) return []
+  const { filter, property } = at
+  const pickable = pickableOf(model, property)
+  const typed = query.trim()
+  return [
+    ...D.operatorsFor(property).map(operator => ({ value: `op:${operator}`, label: D.OPERATOR_LABEL[operator], group: 'Condition', isChecked: filter.operator === operator })),
+    ...(D.isUnary(filter.operator) ? [] : pickable !== null
+      ? pickable.map(entry => ({ value: `value:${entry.id}`, label: entry.name, group: 'Value', isChecked: filter.value === entry.id }))
+      : [
+          ...(typed === '' ? [] : [{ value: 'set', label: `Set to "${typed}"`, group: 'Value', keywords: query }]),
+          ...(filter.value === '' ? [] : [{ value: 'clear', label: `Clear "${filter.value}"`, group: 'Value' }]),
+        ]),
+    { value: 'remove', label: 'Delete filter', group: 'Filter' },
+  ]
+}
+
+const sortItems = (model: Model): ReadonlyArray<PickerItem> => {
+  const page = editableDatabase(model)
+  const view = page === null ? null : activeView(page.database, model.db)
+  if (page === null || view === null) return []
+  const nameOf = (propertyId: string) => (propertyId === D.TITLE ? 'Name' : (D.propertyOf(page.database, propertyId)?.name ?? ''))
+  return [
+    ...view.sorts.flatMap((sort, index) => [
+      { value: `flip:${sort.propertyId}`, label: `${nameOf(sort.propertyId)}: ${sort.isDescending ? 'Descending' : 'Ascending'}`, group: 'Sorts', hint: 'Flip' },
+      ...(index === 0 ? [] : [{ value: `up:${sort.propertyId}`, label: `Move ${nameOf(sort.propertyId)} up`, group: 'Sorts' }]),
+      { value: `remove:${sort.propertyId}`, label: `Remove ${nameOf(sort.propertyId)}`, group: 'Sorts' },
+    ]),
+    ...[D.TITLE, ...page.database.properties.map(property => property.id)].filter(id => !view.sorts.some(sort => sort.propertyId === id)).map(id => ({ value: `add:${id}`, label: nameOf(id), group: 'Add a sort' })),
+    ...(view.sorts.length === 0 ? [] : [{ value: 'clear', label: 'Delete all sorts', group: 'Sorts' }]),
+  ]
+}
+
+/** A view change that keeps its menu open, as filter and sort menus stay while you adjust them. */
+const changeKeeping = (model: Model, picker: Picker, page: Page, changes: ReadonlyArray<D.DatabaseChange>): UpdateReturn =>
+  ({ model: { ...model, picker: { ...picker, query: '' } }, commands: changes.map(change => ChangeDatabase({ pageId: page.id, change, actorId: model.me.id })) })
+
+const chooseFilter = (model: Model, picker: Picker, page: Page, view: D.DatabaseView | null, value: string): UpdateReturn => {
+  const at = filterAt(model, picker.pageId)
+  if (at === null || view === null) return { model: { ...model, picker: null } }
+  const { filter, property } = at
+  const set = (operator: D.Operator, next: string) => changeKeeping(model, picker, page, [{ _tag: 'SetFilter', viewId: view.id, filterId: filter.id, operator, value: next }])
+  const valued = D.isUnary(filter.operator) ? (D.operatorsFor(property).find(operator => !D.isUnary(operator)) ?? filter.operator) : filter.operator
+  if (value.startsWith('op:')) {
+    const operator = value.slice(3)
+    return S.is(D.Operator)(operator) && D.operatorsFor(property).includes(operator) ? set(operator, filter.value) : { model }
+  }
+  if (value.startsWith('value:')) {
+    const id = value.slice(6)
+    return pickableOf(model, property)?.some(entry => entry.id === id) === true ? set(valued, filter.value === id ? '' : id) : { model }
+  }
+  switch (value) {
+    case 'set': {
+      const typed = picker.query.trim()
+      const tag = property?.type._tag ?? 'Title'
+      if (typed === '' || pickableOf(model, property) !== null) return { model }
+      if (tag === 'Number' && !Number.isFinite(Number(typed))) return { model: { ...model, notice: 'Enter a number.' } }
+      if ((tag === 'Date' || tag === 'CreatedTime' || tag === 'LastEditedTime') && !isDay(typed)) return { model: { ...model, notice: 'Enter a date as YYYY-MM-DD.' } }
+      return set(valued, typed)
+    }
+    case 'clear': return set(filter.operator, '')
+    case 'remove': return changeDb(model, page, { _tag: 'RemoveFilter', viewId: view.id, filterId: filter.id })
+    default: return { model }
+  }
+}
+
+const chooseSort = (model: Model, picker: Picker, page: Page & { database: D.Database }, view: D.DatabaseView | null, value: string): UpdateReturn => {
+  if (view === null) return { model: { ...model, picker: null } }
+  if (value === 'clear') return changeKeeping(model, picker, page, view.sorts.map(sort => ({ _tag: 'SetSort', viewId: view.id, propertyId: sort.propertyId, isDescending: null })))
+  const split = value.indexOf(':')
+  const [kind, propertyId] = [value.slice(0, split), value.slice(split + 1)]
+  if (propertyId !== D.TITLE && D.propertyOf(page.database, propertyId) === null) return { model }
+  const sort = view.sorts.find(entry => entry.propertyId === propertyId)
+  switch (kind) {
+    case 'add': return sort === undefined ? changeKeeping(model, picker, page, [{ _tag: 'SetSort', viewId: view.id, propertyId, isDescending: false }]) : { model }
+    case 'flip': return sort === undefined ? { model } : changeKeeping(model, picker, page, [{ _tag: 'SetSort', viewId: view.id, propertyId, isDescending: !sort.isDescending }])
+    case 'up': return sort === undefined ? { model } : changeKeeping(model, picker, page, [{ _tag: 'MoveSort', viewId: view.id, propertyId }])
+    case 'remove': return sort === undefined ? { model } : changeKeeping(model, picker, page, [{ _tag: 'SetSort', viewId: view.id, propertyId, isDescending: null }])
+    default: return { model }
+  }
+}
+
 const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateReturn => {
   const closed = { ...model, picker: null }
   const page = editableDatabase(model)
@@ -928,7 +1048,14 @@ const chooseDatabase = (model: Model, picker: Picker, value: string): UpdateRetu
   const view = activeView(page.database, model.db)
   const property = page.database.properties.find(entry => entry.id === picker.pageId)
   switch (picker.field) {
+    case 'addFilter':
+      return view === null ? { model: closed } : changeDb(model, page, { _tag: 'AddFilter', viewId: view.id, propertyId: value })
+    case 'filter':
+      return chooseFilter(model, picker, page, view, value)
+    case 'sorts':
+      return chooseSort(model, picker, page, view, value)
     case 'property': {
+      if (value === 'filter' && view !== null) return changeDb(model, page, { _tag: 'AddFilter', viewId: view.id, propertyId: picker.pageId })
       if (value.startsWith('sort:') && view !== null) return changeDb(model, page, { _tag: 'SetSort', viewId: view.id, propertyId: picker.pageId, isDescending: value === 'sort:none' ? null : value === 'sort:desc' })
       if (property === undefined) return { model: closed }
       switch (value) {
@@ -981,6 +1108,21 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       return model.page?.database?.views.some(view => view.id === message.viewId) === true ? { model: withDb({ ...model, picker: null }, { viewId: message.viewId, editing: null, datePick: null }) } : { model }
     case 'ClickedViewMenu':
       return editableDatabase(model)?.database.views.some(view => view.id === message.viewId) === true ? { model: withPicker(model, openPicker('view', message.viewId, viewAnchor(message.viewId))) } : { model }
+    case 'ClickedAddFilter': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      return page === null || view === null ? { model } : { model: withPicker(model, openPicker('addFilter', view.id, FILTER_ANCHOR)) }
+    }
+    case 'ClickedFilter': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      return view?.filters.some(filter => filter.id === message.filterId) === true ? { model: withPicker(model, openPicker('filter', message.filterId, filterAnchor(message.filterId))) } : { model }
+    }
+    case 'ClickedSorts': {
+      const page = editableDatabase(model)
+      const view = page === null ? null : activeView(page.database, model.db)
+      return page === null || view === null ? { model } : { model: withPicker(model, openPicker('sorts', view.id, SORT_ANCHOR)) }
+    }
     case 'ClickedAddView': {
       const page = editableDatabase(model)
       return page === null ? { model } : { model: withPicker(model, openPicker('addView', page.id, ADD_VIEW_ANCHOR)) }
@@ -1070,6 +1212,7 @@ const updateDatabase = (model: Model, message: Message): UpdateReturn | null => 
       return { model: withDb(model, { query: message.query.slice(0, 200) }) }
     case 'SucceededDbChange': {
       const { change, addedId } = message
+      if (change._tag === 'AddFilter' && addedId !== null && model.picker === null) return { model: withPicker(model, openPicker('filter', addedId, filterAnchor(addedId))) }
       return change._tag === 'AddView' || change._tag === 'DuplicateView'
         ? { model: withDb(model, { viewId: addedId }) }
         : change._tag === 'DeleteView' && model.db.viewId === change.viewId ? { model: withDb(model, { viewId: null }) } : { model }
@@ -1178,6 +1321,7 @@ const DATABASE_TAGS = [
   'ClickedCell', 'ChangedCell', 'SubmittedCell', 'CanceledCell', 'ToggledCell', 'ClickedDateCell', 'ChangedDateMonth', 'PickedDate', 'ClearedDate', 'ClosedDate',
   'ClickedNewRow', 'ClickedDbSearch', 'ChangedDbQuery', 'SucceededDbChange', 'SucceededAddRow',
   'ClickedNewInGroup', 'ClickedNewOnDay', 'StartedCardDrag', 'EndedCardDrag', 'EnteredDropTarget', 'DroppedCard', 'ChangedCalendarMonth',
+  'ClickedAddFilter', 'ClickedFilter', 'ClickedSorts',
 ] as const
 type PageMessage = Exclude<Message, { _tag: (typeof DATABASE_TAGS)[number] }>
 const isPageMessage = (message: Message): message is PageMessage => !(DATABASE_TAGS as ReadonlyArray<string>).includes(message._tag)
@@ -1401,6 +1545,9 @@ const DB_MESSAGES: DatabaseMessages<Message> = {
   enterDrop: key => Message.EnteredDropTarget({ key }),
   drop: key => Message.DroppedCard({ key }),
   month: month => Message.ChangedCalendarMonth({ month }),
+  addFilter: Message.ClickedAddFilter(),
+  filter: filterId => Message.ClickedFilter({ filterId }),
+  sorts: Message.ClickedSorts(),
 }
 
 const isBlankPage = (page: Page): boolean => page.content.every(entry => entry.text.length === 0 && entry.kind._tag === 'Paragraph')
