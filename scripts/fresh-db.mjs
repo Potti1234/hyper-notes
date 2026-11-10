@@ -8,7 +8,8 @@ if (existsSync('.env')) process.loadEnvFile('.env')
 
      node scripts/fresh-db.mjs test     the Postgres tests (npm run test:pg)
      node scripts/fresh-db.mjs check    demo content, a server on :4200 and the
-                                        browser check (npm run check:fresh)
+                                        browser, overlay and editor checks
+                                        (npm run check:fresh)
      Add --bun to use Bun for the database tests, seed, and app server.
 
    The database (hypernotes_test / hypernotes_check) is dropped and created
@@ -66,6 +67,7 @@ const env = { ...process.env, URL: `http://localhost:${port}` }
 try {
   await run(process.execPath, ['scripts/check.mjs'], env)
   await run(process.execPath, ['scripts/check-overlays.mjs'], env)
+  await run(process.execPath, ['scripts/check-editor.mjs'], env)
 } finally {
   stop()
 }
