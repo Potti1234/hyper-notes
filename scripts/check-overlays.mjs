@@ -5,8 +5,8 @@ import { chromium } from 'playwright'
 
    At each window size it opens the page menu of the sidebar rows nearest the
    top and bottom of the window, the search palette, and in the editor the
-   slash, mention and emoji menus, the block menu, the color menu and the
-   inline toolbar, on a
+   slash, mention and emoji menus, the block menu, the color menu, the
+   inline toolbar, the link prompt and the link card, on a
    block near the top and one near the bottom of the window. The panel that
    opens must lie inside the window.
 
@@ -134,6 +134,14 @@ try {
       await page.locator('[data-overlay="nb-toolbar"] [data-tool="color"]').click()
       await measure(page, '[data-overlay="nb-color-menu"]', `${where}: the color menu`)
       await closeWithEscape(page, '[data-overlay="nb-color-menu"]')
+      await page.keyboard.press('Control+k')
+      await measure(page, '[data-overlay="nb-prompt"]', `${where}: the link prompt`)
+      await page.keyboard.type('a.example')
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('End')
+      await page.keyboard.press('ArrowLeft')
+      await measure(page, '[data-overlay="nb-link-card"]', `${where}: the link card`)
+      await page.locator('[data-overlay="nb-link-card"] [data-tool="link-remove"]').click()
       await page.keyboard.press('End')
       await page.hover(`[data-block-id="${id}"]`)
       await page.locator(`[data-action="handle"][data-block="${id}"]`).click()

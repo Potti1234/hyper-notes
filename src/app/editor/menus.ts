@@ -3,7 +3,10 @@ import type { MemberRef, PageRef } from './island'
 import { addDays, formatDate } from './render'
 import type { Color, Inline, KindTag } from './schema'
 import { COLOR_NAMES, isIsoDate } from './schema'
-import type { InlineMenu } from './state'
+import * as B from './blocks'
+import type { Document } from './schema'
+import { type InlineMenu, type Selection, isCollapsed } from './state'
+import * as T from './text'
 
 /* The editor's menus as data: the `/` menu's blocks and the block menu's
    actions, with Notion's names, groups and search words. */
@@ -107,4 +110,35 @@ export const inlineMenuItems = (menu: InlineMenu, sources: InlineSources): Reado
     ...[...DATE_WORDS.filter(([label]) => has(label)).map(([label, days]) => [label, addDays(sources.today, days)] as const), ...typed.map(date => [formatDate(date), date] as const)]
       .map(([label, date]) => ({ group: 'Date', label, hint: formatDate(date), piece: { _tag: 'DateMention' as const, date, marks: PLAIN_MARKS } })),
   ]
+}
+
+// LINKS
+
+/** A typed link as it is stored: web links get https:// unless they name a scheme or a path here. */
+export const normalizeLink = (value: string): string => (/^(https?:|mailto:|\/)/.test(value) ? value : `https://${value}`)
+
+export type LinkChoice = Readonly<{ group: 'Link' | 'Link to page'; label: string; url: string }>
+
+/** What the link prompt offers for the typed text: the text as a web link, then pages whose title matches. */
+export const linkChoices = (value: string, pages: ReadonlyArray<PageRef>, pageId: string): ReadonlyArray<LinkChoice> => {
+  const typed = value.trim()
+  if (typed === '') return []
+  const needle = typed.toLowerCase()
+  return [
+    { group: 'Link', label: typed, url: normalizeLink(typed) },
+    ...pages.filter(page => page.id !== pageId && (page.title || 'Untitled').toLowerCase().includes(needle)).slice(0, 6)
+      .map(page => ({ group: 'Link to page' as const, label: `${page.icon} ${page.title || 'Untitled'}`.trim(), url: `/p/${page.id}` })),
+  ]
+}
+
+export type LinkSpot = Readonly<{ blockId: string; from: number; to: number; url: string }>
+
+/** The whole link the caret stands in (or at the end of), which the link card shows. */
+export const linkUnderCaret = (doc: Document, selection: Selection): LinkSpot | null => {
+  if (selection._tag !== 'TextSelection' || !isCollapsed(selection)) return null
+  const block = B.find(doc, selection.focus.blockId)
+  const range = block === null ? null : T.linkRange(block.text, selection.focus.offset)
+  if (block === null || range === null) return null
+  const url = T.linkAt(block.text, range[0], range[1])
+  return url === null ? null : { blockId: block.id, from: range[0], to: range[1], url }
 }

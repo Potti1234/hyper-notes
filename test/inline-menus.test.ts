@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { inlineMenuItems } from '../src/app/editor/menus'
-import type { InlineMenu } from '../src/app/editor/state'
+import * as B from '../src/app/editor/blocks'
+import { inlineMenuItems, linkChoices, linkUnderCaret, normalizeLink } from '../src/app/editor/menus'
+import { type InlineMenu, caret } from '../src/app/editor/state'
+import * as T from '../src/app/editor/text'
 
 const sources = {
   members: [{ id: 'm1', name: 'Morgan Vale' }, { id: 'm2', name: 'Riley Quinn' }],
@@ -44,5 +46,32 @@ describe('inline menus', () => {
     expect(items.every(item => item.group === 'Emoji' && item.piece._tag === 'Text')).toBe(true)
     expect(items.some(item => item.piece._tag === 'Text' && item.piece.text === String.fromCodePoint(0x1f680))).toBe(true)
     expect(inlineMenuItems(menu(':', 'qqqq'), sources)).toEqual([])
+  })
+})
+
+describe('links', () => {
+  const pages = [{ id: 'p1', title: 'Engineering wiki', icon: '' }, { id: 'here', title: 'Engineering notes', icon: '' }]
+
+  it('the link prompt offers the typed text as a web link, then matching pages other than this one', () => {
+    expect(linkChoices('', pages, 'here')).toEqual([])
+    expect(linkChoices('eng', pages, 'here')).toEqual([
+      { group: 'Link', label: 'eng', url: 'https://eng' },
+      { group: 'Link to page', label: 'Engineering wiki', url: '/p/p1' },
+    ])
+    expect(linkChoices('http://a.b', pages, 'here')[0]?.url).toBe('http://a.b')
+    expect(linkChoices('mailto:x@y.z', pages, 'here')[0]?.url).toBe('mailto:x@y.z')
+    expect(normalizeLink('/p/p1')).toBe('/p/p1')
+  })
+
+  it('the link card follows a collapsed caret inside or at the end of a link', () => {
+    const text = T.setLink(T.plain('see the docs now'), 8, 12, 'https://d.example')
+    const doc = [{ ...B.paragraph('a'), text }]
+    const at = (offset: number) => linkUnderCaret(doc, caret('a', offset))
+    expect(at(10)).toEqual({ blockId: 'a', from: 8, to: 12, url: 'https://d.example' })
+    expect(at(12)).toEqual({ blockId: 'a', from: 8, to: 12, url: 'https://d.example' })
+    expect(at(8)).toBeNull()
+    expect(at(2)).toBeNull()
+    expect(linkUnderCaret(doc, { _tag: 'TextSelection', anchor: { blockId: 'a', offset: 9 }, focus: { blockId: 'a', offset: 11 } })).toBeNull()
+    expect(linkUnderCaret(doc, caret('missing', 0))).toBeNull()
   })
 })

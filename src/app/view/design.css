@@ -157,6 +157,8 @@
 .nb-drop-right { box-shadow: 3px 0 0 0 color-mix(in srgb, var(--primary) 60%, transparent); }
 .nb-overlay { z-index: 50; min-width: 240px; max-width: 320px; overflow-y: auto; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.14); padding: 6px; font-size: 14px; }
 .nb-toolbar { display: flex; flex-direction: row; gap: 2px; min-width: 0; padding: 4px; }
+.nb-link-card { display: flex; flex-direction: row; align-items: center; gap: 2px; min-width: 0; max-width: 420px; padding: 4px; }
+.nb-link-url { min-width: 0; overflow: hidden; padding: 2px 8px; }
 .nb-tool { padding: 2px 8px; border-radius: 4px; cursor: pointer; user-select: none; }
 .nb-tool-bold { font-weight: 700; } .nb-tool-italic { font-style: italic; } .nb-tool-underline { text-decoration: underline; } .nb-tool-strike { text-decoration: line-through; }
 .nb-menu-heading { padding: 6px 8px 2px; font-size: 12px; color: var(--muted-foreground); }

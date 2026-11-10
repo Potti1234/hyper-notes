@@ -6,10 +6,11 @@ import { defineMessageUnion } from 'foldkit/message'
 import * as Render from 'foldkit/render'
 
 import * as B from './blocks'
+import { link } from '../../ui/link'
 import { blockAt, readSelection, writeSelection } from './dom.client'
 import { EditorEvent, EditorProps, MemberRef, PageRef } from './island'
 import { keyResult } from './keys'
-import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, inlineMenuItems, slashItems } from './menus'
+import { BACKGROUND_COLORS, type BlockMenuItem, type InlineItem, TEXT_COLORS, blockMenuItems, inlineMenuItems, linkChoices, linkUnderCaret, slashItems } from './menus'
 import { ANCHOR, colorClass, context, renderDocument } from './render'
 import { type Block, type Color, Document, type ToggleMark, hasText } from './schema'
 import { type Action, EditorState, type InlineMenu, Selection, apply, caret, initial, isCollapsed, ordered, targetIds } from './state'
@@ -257,7 +258,7 @@ const submitPrompt = (model: Model, overlay: Extract<Overlay, { _tag: 'Prompt' }
   const target = B.find(model.editor.doc, overlay.blockId)
   const value = overlay.value.trim()
   switch (overlay.field) {
-    case 'link': return act(model, { _tag: 'SetLink', url: value === '' ? null : /^(https?:|mailto:|\/)/.test(value) ? value : `https://${value}` }, closed)
+    case 'link': return act(model, { _tag: 'SetLink', url: linkChoices(overlay.value, model.pages, model.pageId)[overlay.active]?.url ?? null }, closed)
     case 'page': {
       const page = visiblePages(model, overlay.value)[overlay.active]
       return page === undefined ? { model: { ...model, overlay: closed } } : act(model, { _tag: 'SetKind', blockId: overlay.blockId, kind: { _tag: 'LinkToPage', pageId: page.id } }, closed)
@@ -277,6 +278,7 @@ const menuLength = (model: Model): number => {
   if (overlay._tag === 'BlockMenu') return blockMenuItems(overlay.query).length
   if (overlay._tag === 'ColorMenu') return COLORS.length
   if (overlay._tag === 'Prompt' && overlay.field === 'page') return visiblePages(model, overlay.value).length
+  if (overlay._tag === 'Prompt' && overlay.field === 'link') return linkChoices(overlay.value, model.pages, model.pageId).length
   const menu = model.editor.menu
   return menu._tag === 'SlashMenu' ? slashItems(menu.query).length : menu._tag === 'InlineMenu' ? inlineItems(model, menu).length : 0
 }
@@ -420,6 +422,15 @@ const step = (model: Model, message: Message): Update.Return<Model, Message> =>
         const mark = TOOL_MARKS[tool]
         if (mark !== undefined) return act(model, { _tag: 'ToggleMark', mark })
         if (tool === 'link') return step(model, Message.OpenedLink())
+        if (tool === 'link-edit' || tool === 'link-copy' || tool === 'link-remove') {
+          const spot = linkUnderCaret(model.editor.doc, model.editor.selection)
+          if (spot === null) return { model }
+          if (tool === 'link-copy') return { model, commands: [CopyText({ text: spot.url })] }
+          if (!model.isEditable) return { model }
+          const range: Selection = { _tag: 'TextSelection', anchor: { blockId: spot.blockId, offset: spot.from }, focus: { blockId: spot.blockId, offset: spot.to } }
+          if (tool === 'link-edit') return commit(model, apply(model.editor, { _tag: 'Select', selection: range }), { _tag: 'Prompt', field: 'link', blockId: spot.blockId, value: spot.url, active: 0 })
+          return actAll(model, [{ _tag: 'Select', selection: range }, { _tag: 'SetLink', url: null }, { _tag: 'Select', selection: model.editor.selection }])
+        }
         if (tool === 'color') return { model: { ...model, overlay: { _tag: 'ColorMenu', active: 0 } } }
         if (tool === 'turn') return step(model, Message.OpenedBlockMenu({ blockId: null }))
         return { model }
@@ -762,12 +773,17 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
       ])), 'top')]
   }
   if (overlay._tag === 'Prompt') {
-    const title = { link: 'Paste or type a link', url: 'Paste a link', tex: 'TeX equation', language: 'Language', page: 'Link to page' }[overlay.field]
+    const title = { link: 'Paste link or search pages', url: 'Paste a link', tex: 'TeX equation', language: 'Language', page: 'Link to page' }[overlay.field]
     const pages = overlay.field === 'page' ? visiblePages(model, overlay.value) : []
+    const links = overlay.field === 'link' ? linkChoices(overlay.value, model.pages, model.pageId) : []
     return [panel(h, 'nb-prompt', [
       h.div([h.Class('nb-menu-heading')], [title]),
       h.div([h.Class('nb-menu-search nb-prompt-value'), h.Attribute('data-prompt', overlay.field)], [overlay.value === '' ? '…' : overlay.value]),
       ...pages.map((page, index) => menuRow(h, index, overlay.active, `${page.icon} ${page.title || 'Untitled'}`.trim())),
+      ...links.flatMap((choice, index) => [
+        ...(choice.group !== links[index - 1]?.group ? [h.div([h.Class('nb-menu-heading')], [choice.group])] : []),
+        menuRow(h, index, overlay.active, choice.label, choice.group === 'Link' ? 'Link' : ''),
+      ]),
       h.div([h.Class('nb-menu-hint')], ['Enter to confirm, Esc to close']),
     ])]
   }
@@ -791,8 +807,8 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
     return [editor.menu.trigger === '@' ? panel(h, 'nb-mention-menu', body) : panel(h, 'nb-emoji-menu', body)]
   }
   const { selection } = editor
+  const tool = (name: string, label: string, isOn = false): Html => h.span([h.Class(['nb-tool', TOOL_CLASS[name] ?? '', isOn ? 'nb-on' : ''].join(' ')), h.Attribute('data-tool', name), h.Attribute('role', 'button'), h.Attribute('aria-label', label)], [label])
   if (model.isEditable && selection._tag === 'TextSelection' && !isCollapsed(selection)) {
-    const tool = (name: string, label: string, isOn = false): Html => h.span([h.Class(['nb-tool', TOOL_CLASS[name] ?? '', isOn ? 'nb-on' : ''].join(' ')), h.Attribute('data-tool', name), h.Attribute('role', 'button'), h.Attribute('aria-label', label)], [label])
     const [start, end] = ordered(editor.doc, selection)
     const text = B.find(editor.doc, start.blockId)?.text ?? []
     const same = start.blockId === end.blockId
@@ -801,6 +817,15 @@ const overlayView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html>
       tool('turn', 'Turn into'), tool('link', 'Link', same && T.linkAt(text, start.offset, end.offset) !== null),
       tool('bold', 'B', has('bold')), tool('italic', 'i', has('italic')), tool('underline', 'U', has('underline')), tool('strike', 'S', has('strike')), tool('code', '</>', has('code')), tool('color', 'A'),
     ], 'top')]
+  }
+  const spot = linkUnderCaret(editor.doc, selection)
+  if (spot !== null) {
+    return [panel(h, 'nb-link-card', [
+      h.span([h.Class('nb-link-url')], [link({ children: [spot.url], href: spot.url, target: spot.url.startsWith('/') ? '_self' : '_blank', color: 'secondary', hasUnderline: true, maxLines: 1 }, h)]),
+      ...(model.isEditable ? [tool('link-edit', 'Edit')] : []),
+      tool('link-copy', 'Copy'),
+      ...(model.isEditable ? [tool('link-remove', 'Remove')] : []),
+    ])]
   }
   return []
 }
